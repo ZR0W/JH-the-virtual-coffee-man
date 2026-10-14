@@ -1,17 +1,13 @@
-"""``dashboard``: a self-contained HTML status page (offline).
+"""The status dashboard page served by ``coffee-kb web`` (read-only, offline).
 
-Written to ``data/dashboard.html`` by default. Meant to be generated on the server and opened on
-another machine (see ``tools/coffee-kb-dashboard.ps1``): no web server, no open port, no
-external requests. On Linux it also shows the systemd timer's next run and recent journal lines
-if they are available; elsewhere those sections are simply omitted.
+Built from the manifest, the report, the collector's systemd timer state (Linux) and the tail
+of ``data/logs/coffee-kb.log``. Self-contained HTML: no external requests.
 """
 
 from __future__ import annotations
 
 import html
 import json
-import shutil
-import subprocess
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from typing import Any
@@ -23,62 +19,14 @@ from coffee_kb.paths import DataPaths
 from coffee_kb.report import build_report
 
 SOURCE_TYPE = "youtube"
-UNIT = "coffee-kb-fetch"
 DAYS = 21
 
 
-def _cmd(args: list[str]) -> str | None:
-    """Run a read-only system command if it exists; None on any failure."""
-    if shutil.which(args[0]) is None:
-        return None
-    try:
-        out = subprocess.run(args, capture_output=True, text=True, timeout=5, check=False)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return out.stdout.strip() if out.returncode == 0 else None
+def system_info(paths: DataPaths, log_lines: int = 80) -> dict[str, Any]:
+    from coffee_kb.logs import tail_lines
+    from coffee_kb.service import collector_unit_state
 
-
-def systemd_info() -> dict[str, Any]:
-    timer = _cmd(
-        [
-            "systemctl",
-            "--user",
-            "show",
-            f"{UNIT}.timer",
-            "-p",
-            "NextElapseUSecRealtime",
-            "-p",
-            "LastTriggerUSec",
-            "-p",
-            "ActiveState",
-        ]
-    )
-    service = _cmd(
-        ["systemctl", "--user", "show", f"{UNIT}.service", "-p", "ActiveState", "-p", "Result"]
-    )
-    journal = _cmd(
-        [
-            "journalctl",
-            "--user",
-            "-u",
-            f"{UNIT}.service",
-            "-n",
-            "40",
-            "--no-pager",
-            "-o",
-            "short-iso",
-        ]
-    )
-
-    def kv(text: str | None) -> dict[str, str]:
-        out: dict[str, str] = {}
-        for line in (text or "").splitlines():
-            if "=" in line:
-                k, v = line.split("=", 1)
-                out[k] = v
-        return out
-
-    return {"timer": kv(timer), "service": kv(service), "journal": journal}
+    return {"collector": collector_unit_state(), "log": tail_lines(paths.log_file, log_lines)}
 
 
 def build_dashboard(
@@ -167,7 +115,7 @@ def _health(
             "level": "serious",
             "label": "Last fetch had errors",
             "detail": f"Exit code {fetch_runs[0]['exit_code']} at {fetch_runs[0]['started_at']}. "
-            "See errors below and the journal.",
+            "See errors and the log below.",
         }
     if running:
         return {
@@ -228,7 +176,7 @@ pre{white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--ink2);
 svg text{fill:var(--muted);font-size:11px}.gridline{stroke:var(--grid)}.axis{stroke:var(--axis)}
 .capline{stroke:var(--ink2);stroke-dasharray:4 4}.b{fill:var(--series-1)}
 .b:hover{opacity:.8}details{margin-top:8px}summary{cursor:pointer;color:var(--ink2)}
-.scroll{overflow-x:auto}
+.scroll{overflow-x:auto}a{color:var(--series-1)}
 """
 
 
@@ -297,17 +245,19 @@ def render_html(data: dict[str, Any]) -> str:
     prog = data["progress"]
     pct = 100 * prog["complete"] / prog["total"] if prog["total"] else 0
     sysi = data["system"]
-    timer = sysi.get("timer") or {}
+    col = sysi.get("collector") or {}
     out: list[str] = []
     a = out.append
     a('<!doctype html><html lang="en"><head><meta charset="utf-8">')
     a('<meta name="viewport" content="width=device-width,initial-scale=1">')
+    if data.get("refresh_s"):
+        a(f'<meta http-equiv="refresh" content="{int(data["refresh_s"])}">')
     a(
         f'<title>coffee-kb status</title><style>{CSS}</style></head><body class="viz-root"><div class="wrap">'
     )
     a(
         f'<h1>coffee-kb collection</h1><div class="sub">Snapshot generated {_e(data["generated_at"])} '
-        f"(UTC). Re-run the dashboard script to refresh.</div>"
+        f"(UTC){'; refreshes every minute' if data.get('refresh_s') else ''}.</div>"
     )
     a(
         f'<div class="card banner lvl-{_e(hl["level"])}"><span class="icon" aria-hidden="true">'
@@ -339,12 +289,15 @@ def render_html(data: dict[str, Any]) -> str:
         f'<div class="note">next eligible '
         f"{'now' if st['remaining_allowance'] > 0 else _e(st['next_eligible_fetch'])}</div></div>"
     )
-    nxt = timer.get("NextElapseUSecRealtime") or "— (timer info unavailable)"
+    nxt = col.get("next_run") or "— (collector timer not installed)"
+    last = col.get("last_result") or "—"
+    if col.get("last_exit_status") not in (None, "", "0"):
+        last += f" (exit {col['last_exit_status']})"
     a(
-        f'<div class="card tile"><div class="label">Next scheduled run</div><div class="value" '
+        f'<div class="card tile"><div class="label">Next collector run</div><div class="value" '
         f'style="font-size:16px;padding-top:10px">{_e(nxt)}</div><div class="note">timer '
-        f"{_e(timer.get('ActiveState', 'unknown'))}; last trigger {_e(timer.get('LastTriggerUSec', '—'))}"
-        f"</div></div>"
+        f"{_e(col.get('timer') or 'unknown')}; last run {_e(col.get('last_trigger') or '—')}: "
+        f"{_e(last)}</div></div>"
     )
     a("</div>")
 
@@ -413,9 +366,11 @@ def render_html(data: dict[str, Any]) -> str:
         )
     a("</div>")
 
-    if sysi.get("journal"):
+    if sysi.get("log"):
         a(
-            f'<h2>Recent log ({UNIT})</h2><div class="card scroll"><pre>{_e(sysi["journal"])}</pre></div>'
+            '<h2>Recent log <span class="sub">(data/logs/coffee-kb.log, '
+            '<a href="logs?n=1000">more</a>)</span></h2>'
+            f'<div class="card scroll"><pre>{_e(chr(10).join(sysi["log"]))}</pre></div>'
         )
     a("</div></body></html>")
     return "".join(out)

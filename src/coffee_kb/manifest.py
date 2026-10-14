@@ -90,10 +90,21 @@ CREATE INDEX IF NOT EXISTS fetch_attempts_started ON fetch_attempts (source_type
 
 
 class Manifest:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, readonly: bool = False) -> None:
+        """``readonly=True`` (used by the web app) never writes or creates anything: it opens
+        the file in SQLite's read-only mode, or an empty in-memory manifest if it doesn't
+        exist yet."""
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.path), isolation_level=None)
+        if readonly:
+            if self.path.exists():
+                uri = self.path.resolve().as_uri() + "?mode=ro"
+                self.conn = sqlite3.connect(uri, uri=True, isolation_level=None, timeout=10)
+                self.conn.row_factory = sqlite3.Row
+                return
+            self.conn = sqlite3.connect(":memory:", isolation_level=None)
+        else:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.conn = sqlite3.connect(str(self.path), isolation_level=None, timeout=10)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self._init_schema()

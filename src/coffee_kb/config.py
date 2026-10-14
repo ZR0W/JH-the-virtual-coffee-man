@@ -51,6 +51,14 @@ class FetchConfig:
 
 
 @dataclass(frozen=True)
+class WebConfig:
+    # 127.0.0.1 = only this machine (use an SSH tunnel); 0.0.0.0 = the whole LAN (pair it with
+    # a firewall rule limited to your home subnet). The web app is read-only either way.
+    host: str = "127.0.0.1"
+    port: int = 8787
+
+
+@dataclass(frozen=True)
 class SponsorBlockConfig:
     base_url: str = "https://sponsor.ajay.app"
     categories: tuple[str, ...] = (
@@ -71,6 +79,7 @@ class Config:
     youtube: YoutubeConfig = field(default_factory=YoutubeConfig)
     fetch: FetchConfig = field(default_factory=FetchConfig)
     sponsorblock: SponsorBlockConfig = field(default_factory=SponsorBlockConfig)
+    web: WebConfig = field(default_factory=WebConfig)
     config_path: Path | None = None
 
 
@@ -79,6 +88,7 @@ _SECTIONS: dict[str, type] = {
     "youtube": YoutubeConfig,
     "fetch": FetchConfig,
     "sponsorblock": SponsorBlockConfig,
+    "web": WebConfig,
 }
 
 
@@ -137,12 +147,15 @@ def config_from_dict(
         youtube=built["youtube"],
         fetch=built["fetch"],
         sponsorblock=built["sponsorblock"],
+        web=built["web"],
         config_path=config_path,
     )
     try:
         safety.validate_fetch_config(cfg.fetch)
     except safety.UnsafeConfigError as exc:
         raise ConfigError(str(exc)) from exc
+    if not 1 <= cfg.web.port <= 65535:
+        raise ConfigError("[web] port must be between 1 and 65535")
     if not cfg.youtube.channel_handle.startswith("@"):
         raise ConfigError("[youtube] channel_handle must be a handle starting with '@'")
     bad_tabs = sorted(set(cfg.youtube.tabs) - {"videos", "shorts", "streams"})

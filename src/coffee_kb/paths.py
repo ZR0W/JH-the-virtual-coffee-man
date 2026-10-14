@@ -68,6 +68,14 @@ class DataPaths:
     def lock(self) -> Path:
         return self.root / ".lock"
 
+    @property
+    def logs_dir(self) -> Path:
+        return self.root / "logs"
+
+    @property
+    def log_file(self) -> Path:
+        return self.logs_dir / "coffee-kb.log"
+
     # --- raw -----------------------------------------------------------------------------
     @property
     def raw_dir(self) -> Path:

@@ -1,5 +1,3 @@
-from fakes import FakeHTTPError
-
 from coffee_kb import safety
 from coffee_kb.clock import iso
 from coffee_kb.dashboard import build_dashboard, render_html
@@ -14,32 +12,11 @@ def _list(env, ids):
             )
 
 
-def test_dashboard_command_writes_html(env, capsys):
-    ids = ["abcDEF12345", "broken00001", "later000001"]
-    _list(env, ids)
-    env.yt.add_video(ids[0])
-    env.yt.add_video(ids[1], manual=FakeHTTPError(404, "Not Found"))
-    env.run("fetch", "--limit", "2")
-    capsys.readouterr()
-    calls = env.yt.network_calls()
-    assert env.run("dashboard") == 0
-    out = env.paths.root / "dashboard.html"
-    assert capsys.readouterr().out.strip() == str(out)
-    page = out.read_text(encoding="utf-8")
-    assert page.startswith("<!doctype html>")
-    assert "Videos collected" in page and "1 <span" in page  # 1 complete (the other is partial)
-    assert "Fetch attempts per day" in page and "<svg" in page and "daily cap 30" in page
-    assert "broken00001" in page  # errors listed
-    assert "Healthy, with item errors" in page
-    assert "http://" not in page and "https://" not in page.split("<title>")[0]  # no external loads
-    assert env.yt.network_calls() == calls  # dashboard made none
-
-
 def test_dashboard_shows_cooldown_as_critical_and_escapes(cfg, data_paths, clock):
     safety.write_cooldown(data_paths, "<script>alert(1)</script> HTTP 429", clock.now())
     with Manifest(data_paths.manifest) as m:
         data = build_dashboard(
-            cfg, data_paths, m, clock.now(), {"timer": {}, "journal": "line <b>"}
+            cfg, data_paths, m, clock.now(), {"collector": {}, "log": ["line <b>"]}
         )
     assert data["health"]["level"] == "critical"
     page = render_html(data)

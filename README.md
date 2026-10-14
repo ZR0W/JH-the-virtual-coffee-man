@@ -96,6 +96,11 @@ coffee-kb normalize [--video ID ...]  # rebuild normalized/ from raw/           
 coffee-kb report [--format text|json] # coverage, errors, safety state          [offline]
 coffee-kb status [--format text|json] # cooldown, daily cap, next eligible time [offline]
 coffee-kb clear-cooldown              # you only, ≥ 48 h after a block          [offline]
+
+coffee-kb collector install|uninstall|status|logs [-n N] [-f]|run|run-now
+                                      # the scheduled collection job (component 1)
+coffee-kb web install|uninstall|status|serve
+                                      # the read-only status web app (component 2)
 ```
 
 Prefix each with `uv run` (e.g. `uv run coffee-kb status`). Add `-v` for debug logging.
@@ -113,6 +118,9 @@ Prefix each with `uv run` (e.g. `uv run coffee-kb status`). Add `-v` for debug l
   re-run it.
 - **report** prints what's been collected and what went wrong. Nothing fails silently: missing
   captions, unavailable videos and errors all show up here.
+
+Collection commands (`discover`, `fetch`, `normalize`, `collector run`) also log to
+`data/logs/coffee-kb.log`.
 
 Exit codes: `0` ok, `1` some videos/tabs failed (see `report`), `2` config/usage error,
 `75` blocked or cooling down.
@@ -204,11 +212,22 @@ immediately and wrote `data/COOLDOWN`.
 
 ---
 
-## Home server (Ubuntu, daily timer)
+## Home server: two components
 
-The collection runs on the home server as a **systemd user unit** once a day, and you watch it
-from your PC with a dashboard. Only one machine fetches at a time: once the server has the data,
-the PC stops fetching.
+On the server, coffee-kb runs as **two independent components**. Each is managed with one
+command, installed as its own systemd *user* service, and can be stopped or removed without
+touching the other:
+
+| | **collector** | **web** |
+|---|---|---|
+| What it is | The scheduled collection job: `discover` (weekly) → `fetch --wait-for-cap` → `normalize` | A read-only status dashboard (stdlib HTTP server) |
+| When it runs | Once a day, 03:00 + random 0–2 h (`coffee-kb-collector.timer`) | Always on (`coffee-kb-web.service`) |
+| Talks to YouTube | Yes (paced, capped, stops on block signals) | **Never.** It can't start a fetch either |
+| Writes | `data/raw/`, `data/normalized/`, the manifest, **`data/logs/coffee-kb.log`** | Nothing (opens the manifest read-only) |
+| Manage it | `coffee-kb collector install · uninstall · status · logs [-f] · run · run-now` | `coffee-kb web install · uninstall · status · serve` |
+
+They share only the `data/` directory: the collector writes it, the web app reads it. Only one
+machine fetches at a time, so once the server has the data the PC stops fetching.
 
 ### One-time setup
 
@@ -231,7 +250,7 @@ tar -czf $env:TEMP\coffee-kb-data.tgz data
 scp $env:TEMP\coffee-kb-data.tgz <server>:
 # Latch the PC so a stray `fetch` here can never run again from this copy:
 $now = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-Set-Content -Encoding ascii data\COOLDOWN "{`"reason`": `"fetching moved to the home server; do not fetch from this PC`", `"detected_at`": `"$now`"}"
+Set-Content -Encoding ascii data\COOLDOWN "{`"reason`": `"fetching moved to the home server`", `"detected_at`": `"$now`"}"
 ```
 
 **3. Server: unpack and check**:
@@ -241,76 +260,75 @@ cd ~/coffee-kb
 tar -xzf ~/coffee-kb-data.tgz && rm ~/coffee-kb-data.tgz
 rm -f data/.lock data/*.txt data/trial-fetch.pid      # PC-only leftovers
 uv run coffee-kb status                               # cooldown: none; cap counts the PC's runs
-uv run coffee-kb report
 ```
 
-**4. Server: install the timer** (user unit + linger):
+**4. Server: install both components**:
 
 ```bash
-cd ~/coffee-kb
-mkdir -p ~/.config/systemd/user
-sed -e "s|@REPO_DIR@|$HOME/coffee-kb|g" -e "s|@UV@|$HOME/.local/bin/uv|g" \
-    deploy/coffee-kb-fetch.service > ~/.config/systemd/user/coffee-kb-fetch.service
-cp deploy/coffee-kb-fetch.timer ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now coffee-kb-fetch.timer
-sudo loginctl enable-linger "$USER"                   # the only sudo: run without a login session
-systemctl --user list-timers coffee-kb-fetch.timer    # shows the next run (03:00–05:00)
+uv run coffee-kb collector install     # writes + enables ~/.config/systemd/user/coffee-kb-collector.{service,timer}
+uv run coffee-kb web install           # writes + starts ~/.config/systemd/user/coffee-kb-web.service
+sudo loginctl enable-linger "$USER"    # once: user services keep running without a login session
+uv run coffee-kb collector status      # next run time + safety state
 ```
 
-The first scheduled run is the first server fetch; there's no need to start one by hand.
+The first scheduled run is the first server fetch; no need to start one by hand
+(`coffee-kb collector run-now` exists if you want to).
 
-**5. PC: the dashboard.** From the PC's checkout:
+**5. Open the dashboard from the PC.** The web app listens on `[web] host`/`port` in
+`config.toml` (default `127.0.0.1:8787`, i.e. only on the server itself). Two ways in:
 
-```powershell
-.\tools\coffee-kb-dashboard.ps1 -Server <server>
-```
+- **SSH tunnel (default, nothing to open):** on the PC run
+  `ssh -N -L 8787:127.0.0.1:8787 <server>` and browse to <http://localhost:8787/>.
+- **LAN:** set `host = "0.0.0.0"` in the server's `config.toml`, re-run
+  `uv run coffee-kb web install`, allow the port from your home subnet only
+  (`sudo ufw allow from 192.168.1.0/24 to any port 8787 proto tcp`, adjusting the subnet), then
+  browse to `http://<server>:8787/` from any device at home. Anyone on your Wi-Fi can then see
+  the dashboard (read-only; it shows titles, counts and logs, not transcripts).
 
-It regenerates the page on the server over SSH, copies it to `%TEMP%` and opens it in your
-browser. Nothing is served or opened on the network. Tip: a function in your PowerShell
-`$PROFILE` makes it one word, e.g. `function ckb { & C:\path\to\checkout\tools\coffee-kb-dashboard.ps1 -Server <server> }`.
+The page refreshes itself every minute. `/api/status` returns the same data as JSON and
+`/logs?n=500` the raw log tail.
 
-### What a daily run does
+### What a collector run does
 
 Between 03:00 and 05:00 (randomized): upgrade yt-dlp → `discover` (only if a week has passed) →
-`fetch --wait-for-cap` (up to 30 videos, 60–120 s apart; if yesterday's run is still inside
-the rolling 24 h window it waits for slots, up to 3 h) → `normalize` → `dashboard`. Roughly an
-hour of mostly sleeping. The backlog finishes in about two weeks; after that a run picks up the
-day's new uploads in a few minutes.
+`fetch --wait-for-cap` (up to 30 videos, 60–120 s apart; if yesterday's run is still inside the
+rolling 24 h window it waits for slots, up to 3 h) → `normalize`. Roughly an hour of mostly
+sleeping, all logged to `data/logs/coffee-kb.log` (rotated at 5 MB, 5 kept). The backlog
+finishes in about two weeks; after that a run picks up the day's new uploads in a few minutes.
 
 ### Day to day
 
-Nothing is required. Glance at the dashboard when you like (every few days is plenty):
+Nothing is required. Glance at the dashboard when you like:
 
 | Dashboard banner | Meaning | What to do |
 |---|---|---|
-| ✔ Healthy | Collecting on schedule | Nothing |
+| ✔ Healthy / Running now | Collecting on schedule | Nothing |
 | ⚠ Healthy, with item errors | Some videos have a missing component | Nothing; they're retried up to 3 times automatically. Persistent ones are listed; retry with `uv run coffee-kb fetch --video ID` |
-| ⚠ No recent fetch | No successful fetch for 36 h | `systemctl --user list-timers`; `journalctl --user -u coffee-kb-fetch -n 100` |
-| ⚠ Last fetch had errors | Exit code 1 | Read the errors and the log section; tell your agent if it's unclear |
+| ⚠ No recent fetch | No successful fetch for 36 h | `uv run coffee-kb collector status` and `collector logs -n 200` |
+| ⚠ Last fetch had errors | Exit code 1 | Read the errors and the log on the page; ask your agent if it's unclear |
 | ✖ Cooldown latch active | YouTube showed a block signal; the job stopped itself | Do nothing for 48 h. Then follow [If a cooldown latch trips](#if-a-cooldown-latch-trips). Every daily run exits immediately without network until you clear it |
 
-Useful commands on the server (`cd ~/coffee-kb` first):
+On the server (`cd ~/coffee-kb` first):
 
 ```bash
-uv run coffee-kb status                              # cooldown, cap, next eligible time
-uv run coffee-kb report                              # coverage and errors
-systemctl --user list-timers coffee-kb-fetch.timer   # next run
-systemctl --user status coffee-kb-fetch              # last run result
-journalctl --user -u coffee-kb-fetch -f              # follow a run live
+uv run coffee-kb collector status        # timer, last result, cooldown, cap
+uv run coffee-kb collector logs -f       # follow the log (Ctrl-C to stop)
+uv run coffee-kb report                  # full coverage and errors
+uv run coffee-kb web status              # is the dashboard up, and where
 ```
 
-**Updating the code:** the timer upgrades yt-dlp, which changes `uv.lock` in the checkout, so
-discard that before pulling: `git checkout uv.lock && git pull && uv sync`.
+**Updating the code:** the collector upgrades yt-dlp, which changes `uv.lock` in the checkout,
+so discard that before pulling, then re-install so the units and the web app pick up changes:
+`git checkout uv.lock && git pull && uv sync && uv run coffee-kb collector install && uv run coffee-kb web install`.
 
-**Pausing / removing:** `systemctl --user disable --now coffee-kb-fetch.timer` pauses it. To
-remove everything: also delete the two files in `~/.config/systemd/user/`, run
-`sudo loginctl disable-linger $USER`, and `rm -rf ~/coffee-kb`. Nothing else is installed
-outside your home directory (uv lives in `~/.local/bin`, its caches in `~/.cache/uv` and
-`~/.local/share/uv`).
+**Pausing / removing:** `uv run coffee-kb collector uninstall` stops collection;
+`uv run coffee-kb web uninstall` stops the dashboard. Each is independent. To remove everything,
+uninstall both, `sudo loginctl disable-linger $USER`, and `rm -rf ~/coffee-kb`. Nothing else is
+installed outside your home directory (uv lives in `~/.local/bin`, its caches in `~/.cache/uv`
+and `~/.local/share/uv`).
 
-**Disk and network:** about 1.3 MB per video, roughly 0.5 GB for the whole channel. Outbound
-HTTPS only; no ports to open.
+**Disk and network:** about 1.3 MB per video, roughly 0.5 GB for the whole channel. The
+collector makes outbound HTTPS only; the web app needs a port only if you choose LAN access.
 
 ---
 

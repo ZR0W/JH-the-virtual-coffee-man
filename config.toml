@@ -27,6 +27,13 @@ max_wait_for_cap_minutes = 180     # fetch --wait-for-cap (daily timer): wait fo
 socket_timeout_s = 30
 audio = false                      # opt-in only; see README before enabling
 
+[web]
+# The read-only status web app (`coffee-kb web serve` / `coffee-kb web install`).
+# "127.0.0.1": only reachable on this machine (from the PC via an SSH tunnel).
+# "0.0.0.0": reachable on the LAN; add a firewall rule limited to your home subnet.
+host = "127.0.0.1"
+port = 8787
+
 [sponsorblock]
 base_url = "https://sponsor.ajay.app"
 categories = ["sponsor", "selfpromo", "interaction", "intro", "outro", "preview", "music_offtopic", "filler"]

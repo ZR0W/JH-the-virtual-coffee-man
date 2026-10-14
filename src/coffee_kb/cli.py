@@ -79,11 +79,11 @@ def _refuse_if_cooling_down(paths: DataPaths, command: str) -> int | None:
     try:
         safety.ensure_no_cooldown(paths)
     except safety.CooldownActive as exc:
-        print(
-            f"coffee-kb {command}: refusing to run: cooldown latch present "
-            f"({exc.latch.describe()}).\n"
-            "No YouTube requests were made. Wait it out; see `coffee-kb status`.",
-            file=sys.stderr,
+        log.error(
+            "%s: refusing to run: cooldown latch present (%s). No YouTube requests were made. "
+            "Wait it out; see `coffee-kb status`.",
+            command,
+            exc.latch.describe(),
         )
         return safety.EXIT_TEMPFAIL
     return None
@@ -125,7 +125,7 @@ def _run_networked(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.N
             finally:
                 http.close()
     except safety.LockHeld as exc:
-        print(f"coffee-kb {command}: {exc}", file=sys.stderr)
+        log.error("%s: %s", command, exc)
         return EXIT_ERROR
 
 
@@ -200,16 +200,156 @@ def cmd_report(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Names
     return EXIT_OK
 
 
-def cmd_dashboard(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Namespace) -> int:
-    from coffee_kb.dashboard import build_dashboard, render_html, systemd_info
+# --- collector component ---------------------------------------------------------------------
 
-    with Manifest(paths.manifest) as manifest:
-        data = build_dashboard(cfg, paths, manifest, clock.now(), systemd_info())
-    out = args.output or (paths.root / "dashboard.html")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render_html(data), encoding="utf-8")
-    print(out)
+
+def _sub_args(args: argparse.Namespace, command: str, **kw) -> argparse.Namespace:
+    return argparse.Namespace(config=args.config, verbose=args.verbose, command=command, **kw)
+
+
+def cmd_collector_run(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Namespace) -> int:
+    """One scheduled collection run: discover (weekly) → fetch --wait-for-cap → normalize."""
+    log.info("=== collector run: start ===")
+    d = cmd_discover(cfg, paths, clock, _sub_args(args, "discover", force=False))
+    fetch_args = _sub_args(
+        args,
+        "fetch",
+        limit=None,
+        video=None,
+        since=None,
+        type=None,
+        audio=False,
+        refresh=False,
+        dry_run=False,
+        wait_for_cap=True,
+    )
+    f = cmd_fetch(cfg, paths, clock, fetch_args)
+    n = cmd_normalize(cfg, paths, clock, _sub_args(args, "normalize", video=None))
+    if safety.EXIT_TEMPFAIL in (d, f):
+        code = safety.EXIT_TEMPFAIL
+    else:
+        code = EXIT_ERROR if (f or n) else EXIT_OK
+    log.info(
+        "=== collector run: end (discover %s, fetch %s, normalize %s) -> exit %s ===", d, f, n, code
+    )
+    return code
+
+
+def _service_call(fn, *a) -> int:
+    from coffee_kb.service import ServiceError
+
+    try:
+        for msg in fn(*a) or []:
+            print(msg)
+    except ServiceError as exc:
+        print(f"coffee-kb: {exc}", file=sys.stderr)
+        return EXIT_ERROR
     return EXIT_OK
+
+
+def cmd_collector(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Namespace) -> int:
+    from coffee_kb import service
+
+    layout = service.default_layout(args.config)
+    action = args.action
+    if action == "run":
+        return cmd_collector_run(cfg, paths, clock, args)
+    if action == "install":
+        return _service_call(service.install_collector, layout, args.config)
+    if action == "uninstall":
+        units = [f"{service.COLLECTOR}.timer", f"{service.COLLECTOR}.service"]
+        return _service_call(service.uninstall, layout, units)
+    if action == "run-now":
+        code = _service_call(service.start_collector_now)
+        if code == EXIT_OK:
+            print(
+                "Started a collector run in the background; follow it with "
+                "`coffee-kb collector logs -f`."
+            )
+        return code
+    if action == "logs":
+        return _show_logs(paths, args.lines, args.follow)
+    st = service.collector_unit_state()
+    if st.get("timer"):
+        print(f"Collector timer: {st['timer']}; next run {st['next_run'] or '-'}")
+        print(
+            f"Last run: {st['last_trigger'] or 'never'} -> {st['last_result'] or '-'} "
+            f"(exit {st['last_exit_status'] or '-'}); service now {st['service']}"
+        )
+    else:
+        print("Collector timer: not installed (or systemd not available here)")
+    print()
+    return cmd_status(cfg, paths, clock, argparse.Namespace(format="text"))
+
+
+def _show_logs(paths: DataPaths, lines: int, follow: bool) -> int:
+    import time
+
+    from coffee_kb.logs import tail_lines
+
+    path = paths.log_file
+    for line in tail_lines(path, lines):
+        print(line)
+    if not follow:
+        if not path.exists():
+            print(f"(no log yet at {path})", file=sys.stderr)
+        return EXIT_OK
+    pos = path.stat().st_size if path.exists() else 0
+    try:
+        while True:
+            time.sleep(1)
+            if not path.exists():
+                continue
+            size = path.stat().st_size
+            if size < pos:  # rotated
+                pos = 0
+            if size > pos:
+                with path.open("rb") as fh:
+                    fh.seek(pos)
+                    chunk = fh.read()
+                pos += len(chunk)
+                sys.stdout.write(chunk.decode("utf-8", errors="replace"))
+                sys.stdout.flush()
+    except KeyboardInterrupt:
+        return EXIT_OK
+
+
+# --- web component --------------------------------------------------------------------------
+
+
+def cmd_web(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Namespace) -> int:
+    from coffee_kb import service
+
+    layout = service.default_layout(args.config)
+    if args.action == "serve":
+        from coffee_kb.web import serve
+
+        serve(cfg, paths, clock)
+        return EXIT_OK
+    if args.action == "install":
+        code = _service_call(service.install_web, layout, args.config)
+        if code == EXIT_OK:
+            print(_web_url_hint(cfg))
+        return code
+    if args.action == "uninstall":
+        return _service_call(service.uninstall, layout, [f"{service.WEB}.service"])
+    st = service.unit_properties(f"{service.WEB}.service", "ActiveState", "SubState", "Result")
+    print(
+        f"Web service: {st.get('ActiveState', 'not installed')} "
+        f"({st.get('SubState', '-')}, result {st.get('Result', '-')})"
+    )
+    print(_web_url_hint(cfg))
+    return EXIT_OK
+
+
+def _web_url_hint(cfg: Config) -> str:
+    port = cfg.web.port
+    if cfg.web.host in ("127.0.0.1", "localhost", "::1"):
+        return (
+            f"Listening on {cfg.web.host}:{port} (this machine only). From the PC:\n"
+            f"  ssh -N -L {port}:127.0.0.1:{port} <server>   then open http://localhost:{port}/"
+        )
+    return f"Listening on {cfg.web.host}:{port}. Open http://<server>:{port}/ from the LAN."
 
 
 # --- status / clear-cooldown ----------------------------------------------------------------
@@ -387,10 +527,28 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(handler=cmd_report)
 
     s = sub.add_parser(
-        "dashboard", help="write an HTML status page (default data/dashboard.html) [offline]"
+        "collector",
+        help="the scheduled collection job: install/uninstall the daily timer, status, logs, run",
     )
-    s.add_argument("--output", type=Path, help="where to write the HTML file")
-    s.set_defaults(handler=cmd_dashboard)
+    s.add_argument(
+        "action",
+        choices=["install", "uninstall", "status", "run", "run-now", "logs"],
+        help="install/uninstall: daily systemd user timer (Linux); status: timer + safety state; "
+        "run: one collection run in the foreground (what the timer runs); run-now: start the "
+        "timer's service now in the background; logs: show data/logs/coffee-kb.log",
+    )
+    s.add_argument("-n", "--lines", type=int, default=50, help="logs: lines to show (default 50)")
+    s.add_argument("-f", "--follow", action="store_true", help="logs: keep following")
+    s.set_defaults(handler=cmd_collector)
+
+    s = sub.add_parser("web", help="the read-only status web app: install/uninstall/status/serve")
+    s.add_argument(
+        "action",
+        choices=["install", "uninstall", "status", "serve"],
+        help="install/uninstall: always-on systemd user service (Linux); serve: run in the "
+        "foreground; status: service state and URL",
+    )
+    s.set_defaults(handler=cmd_web)
 
     s = sub.add_parser("status", help="cooldown state, daily cap, next eligible time [offline]")
     s.add_argument("--format", choices=["text", "json"], default="text")
@@ -419,7 +577,26 @@ def main(argv: Sequence[str] | None = None, clock: Clock | None = None) -> int:
         print(f"coffee-kb: config error: {exc}", file=sys.stderr)
         return EXIT_USAGE
     paths = DataPaths(cfg.data_dir)
-    return int(args.handler(cfg, paths, clock or Clock(), args))
+    file_handler = None
+    if _logs_to_file(args):
+        from coffee_kb.logs import add_file_handler
+
+        file_handler = add_file_handler(paths.log_file)
+    try:
+        return int(args.handler(cfg, paths, clock or Clock(), args))
+    finally:
+        if file_handler is not None:
+            logging.getLogger("coffee_kb").removeHandler(file_handler)
+            file_handler.close()
+
+
+def _logs_to_file(args: argparse.Namespace) -> bool:
+    """Commands that do collection work (or serve the app) also log to data/logs/."""
+    if args.command in ("discover", "normalize"):
+        return True
+    if args.command == "fetch":
+        return not args.dry_run
+    return args.command in ("collector", "web") and getattr(args, "action", "") in ("run", "serve")
 
 
 if __name__ == "__main__":  # pragma: no cover
