@@ -6,7 +6,9 @@ Reads only data/normalized/ (no network, no manifest writes):
 
 Per video: caption cue/word counts, auto/manual word ratio, chapters, cues inside sponsor
 segments, and "boundary repeats": places where an auto cue starts with the last 3+ words of the
-previous cue (rolling-caption duplicates that de-duplication should have removed). Then a few
+previous cue. Leftover rolling-caption duplicates would show up there, but so does natural
+speech ("a little bit nervous. I'm a little bit nervous"), so a few per long video are normal;
+the auto/manual word ratio (≈1.0 when de-duplication works) is the stronger signal. Then a few
 timestamped transcript samples for eyeballing.
 """
 
@@ -79,7 +81,9 @@ def main(argv: list[str] | None = None) -> int:
                 f"{vid}: auto/manual word ratio {ratio:.2f} (possible duplication or gaps)"
             )
         if reps:
-            flags.append(f"{vid}: {reps} auto-caption boundary repeat(s)")
+            flags.append(
+                f"{vid}: {reps} auto-caption boundary repeat(s) (natural speech counts too)"
+            )
         if best and chapters and all(r["chapter"] is None for r in best):
             flags.append(f"{vid}: has chapters but no cue got one")
     print()

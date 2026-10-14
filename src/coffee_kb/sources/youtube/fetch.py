@@ -29,6 +29,9 @@ log = logging.getLogger(__name__)
 SOURCE_TYPE = "youtube"
 WATCH_URL = "https://www.youtube.com/watch?v={}"
 SKIP_AVAILABILITY = {"unavailable", "skipped_restricted"}
+# An incomplete video is retried automatically on later runs at most this many times in total
+# (e.g. auto captions that never appear); after that only `fetch --video ID` retries it.
+MAX_FAILED_ATTEMPTS = 3
 RESTRICTED_AVAILABILITY = {"subscriber_only", "premium_only", "needs_auth"}
 CAPTION_FORMATS = ("json3", "vtt")
 CAPTION_KINDS = (
@@ -118,6 +121,16 @@ def _short(msg: str, n: int = 500) -> str:
 # --- candidate selection (offline) ----------------------------------------------------------
 
 
+def retry_exhausted(manifest: mf.Manifest, required: list[str]) -> list[str]:
+    """Incomplete items that hit MAX_FAILED_ATTEMPTS and are no longer retried automatically."""
+    counts = manifest.failed_attempt_counts(SOURCE_TYPE)
+    return sorted(
+        i
+        for i, n in counts.items()
+        if n >= MAX_FAILED_ATTEMPTS and not manifest.is_complete(SOURCE_TYPE, i, required)
+    )
+
+
 def select_candidates(rt: Runtime, opts: FetchOptions) -> tuple[list[str], int]:
     """Return (item ids to fetch in order, number skipped as already complete)."""
     m = rt.manifest
@@ -143,7 +156,18 @@ def select_candidates(rt: Runtime, opts: FetchOptions) -> tuple[list[str], int]:
     if opts.refresh:
         return ids, 0
     todo = [i for i in ids if not m.is_complete(SOURCE_TYPE, i, required)]
-    return todo, len(ids) - len(todo)
+    skipped_complete = len(ids) - len(todo)
+    if not opts.videos:
+        exhausted = set(retry_exhausted(m, required))
+        if exhausted & set(todo):
+            log.info(
+                "%d incomplete video(s) skipped after %d failed attempts (see `report`; "
+                "retry one with `fetch --video ID`)",
+                len(exhausted & set(todo)),
+                MAX_FAILED_ATTEMPTS,
+            )
+            todo = [i for i in todo if i not in exhausted]
+    return todo, skipped_complete
 
 
 # --- caption track choice -------------------------------------------------------------------
@@ -448,8 +472,10 @@ class VideoFetcher:
                 )
             reason = _valid_caption(ext, body)
             if reason:
-                problems.append(f"{ext}: {reason}")
-                last_kind = ErrorKind.UNKNOWN
+                # A 200 response with unusable content (e.g. captions not generated yet) is not
+                # a transport error, so it doesn't count toward the unknown-error streak.
+                head = body[:80].decode("utf-8", errors="replace")
+                problems.append(f"{ext}: {reason} ({len(body)} bytes, starts {head!r})")
                 continue
             rel = f"captions/{lang}.{kind}.{ext}"
             writer.write_bytes(rel, body)
@@ -461,9 +487,10 @@ class VideoFetcher:
                 f"(have: {', '.join(sorted(str(k) for k in by_ext)) or 'none'})",
                 "lang": lang,
             }
+        offered = ", ".join(sorted(str(k) for k in by_ext)) or "none"
         return {
             "status": mf.STATUS_ERROR,
-            "detail": "; ".join(problems),
+            "detail": f"{'; '.join(problems)} [formats offered: {offered}]",
             "lang": lang,
             "kind": last_kind,
         }

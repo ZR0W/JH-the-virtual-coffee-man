@@ -552,3 +552,52 @@ def test_choose_track():
     # Original language is German: 'en' would be a machine translation → not used.
     assert choose_track({"de-orig": fmt, "de": fmt, "en": fmt}, langs, auto=True) is None
     assert choose_track({}, langs, auto=True) is None
+
+
+def test_main_videos_before_shorts_and_streams_when_dates_unknown(env):
+    with env.manifest() as m:
+        now = iso(env.clock.now())
+        m.upsert_listed_item("youtube", "stream00000", now, item_type="stream", listing_rank=0)
+        m.upsert_listed_item("youtube", "short000000", now, item_type="short", listing_rank=0)
+        m.upsert_listed_item("youtube", "video000001", now, item_type="video", listing_rank=1)
+        m.upsert_listed_item("youtube", "video000000", now, item_type="video", listing_rank=0)
+        order = [r["item_id"] for r in m.items_newest_first("youtube")]
+    assert order == ["video000000", "video000001", "short000000", "stream00000"]
+
+
+def test_incomplete_video_retried_at_most_three_times(env, capsys):
+    info = fixture_info(VID, subtitles={})  # auto track only
+    auto_url = info["automatic_captions"]["en-orig"][0]["url"]
+    _list(env, [VID])
+    env.yt.add_video(VID, info, auto=b"")  # json3 response empty: captions not ready
+    del env.yt.urls[auto_url]
+    env.yt.urls[auto_url] = b""
+    for _ in range(3):
+        assert env.run("fetch") == 0
+        env.clock.advance(hours=25)
+    with env.manifest() as m:
+        assert m.failed_attempt_counts("youtube") == {VID: 3}
+        detail = m.components("youtube", VID)["captions_auto"]["detail"]
+        assert "empty response" in detail and "formats offered: json3, vtt" in detail
+    calls = env.yt.network_calls()
+    capsys.readouterr()
+    assert env.run("fetch") == 0
+    assert env.yt.network_calls() == calls  # given up: no more automatic retries
+    assert "after 3 failed attempts" in capsys.readouterr().err
+    assert env.run("report", "--format", "json") == 0
+    assert json.loads(capsys.readouterr().out)["retry_exhausted"] == [VID]
+    # An explicit --video still retries it.
+    assert env.run("fetch", "--video", VID) == 0
+    assert env.yt.network_calls() > calls
+
+
+def test_invalid_caption_content_does_not_feed_unknown_streak(env):
+    ids = _ids(4)
+    _list(env, ids)
+    for v in ids:
+        info = env.yt.add_video(v, manual=b"", auto=b"not captions")
+        env.yt.urls[info["subtitles"]["en"][1]["url"]] = b""  # vtt fallback: empty too
+        env.yt.urls[info["automatic_captions"]["en-orig"][1]["url"]] = b"{}"
+    assert env.run("fetch") == 0
+    assert not env.paths.cooldown.exists()
+    assert len(_video_calls(env)) == 4

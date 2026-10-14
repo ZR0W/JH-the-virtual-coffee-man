@@ -217,10 +217,13 @@ class Manifest:
         ).fetchall()
 
     def items_newest_first(self, source_type: str) -> list[sqlite3.Row]:
-        """Newest first: by upload date where known, then by channel listing position."""
+        """Newest first: by upload date where known; otherwise (flat channel listings carry no
+        dates) by channel listing position, main videos before shorts before streams."""
         return self.conn.execute(
             """SELECT * FROM items WHERE source_type = ?
                ORDER BY upload_date IS NULL, upload_date DESC,
+                        CASE item_type WHEN 'video' THEN 0 WHEN 'short' THEN 1
+                                       WHEN 'stream' THEN 2 ELSE 3 END,
                         listing_rank IS NULL, listing_rank ASC, item_id""",
             (source_type,),
         ).fetchall()
@@ -351,6 +354,16 @@ class Manifest:
             (source_type,),
         ).fetchone()
         return row["t"] if row is not None else None
+
+    def failed_attempt_counts(self, source_type: str) -> dict[str, int]:
+        """item_id → number of attempts that ended 'partial' or 'error' (not blocked,
+        interrupted, or skipped as upcoming)."""
+        rows = self.conn.execute(
+            """SELECT item_id, COUNT(*) AS n FROM fetch_attempts
+               WHERE source_type = ? AND outcome IN ('partial', 'error') GROUP BY item_id""",
+            (source_type,),
+        ).fetchall()
+        return {r["item_id"]: r["n"] for r in rows}
 
     def attempts(self, source_type: str) -> list[sqlite3.Row]:
         return self.conn.execute(

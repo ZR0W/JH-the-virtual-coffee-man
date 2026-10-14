@@ -440,9 +440,9 @@ Server setup outline (to be confirmed with the user at checkpoint D):
 5. Monitoring: `journalctl --user -u coffee-kb-fetch`, `uv run coffee-kb status`,
    `uv run coffee-kb report`.
 6. No inbound ports are needed; the firewall stays as it is. The job only makes outbound HTTPS.
-7. Disk: captions + metadata are about 1–1.5 MB per video (measured at checkpoint B: ~1.4 MB for a
-   30-minute video, mostly `info.json` with its format list and the auto-caption json3), so roughly
-   1–2 GB for the whole channel; audio (if ever enabled) several GB more.
+7. Disk: captions + metadata average about 1.3 MB per item (measured at checkpoint C: 26 MB for
+   21 items, mostly `info.json` with its format list and the auto-caption json3), so roughly
+   0.5 GB for the whole channel (411 items in October 2026); audio (if ever enabled) several GB more.
 8. Once the archive is complete, the timer can stay on to pick up new uploads (typically 0–2 videos
    per day).
 
@@ -470,6 +470,13 @@ Where the code refines or departs from the text above:
   (and `audio` when requested) to be `ok`/`absent` in the latest snapshot. SponsorBlock is not
   required, so an outage of that service never causes YouTube re-fetches; its errors show in
   `report` and are fixed with `fetch --refresh --video ID`.
+- **Order when dates are unknown.** Flat channel listings carry no upload dates, so until a video
+  is fetched the order is by listing position with main videos before shorts before streams.
+- **Retry limit.** An incomplete video is retried automatically on later runs, up to 3 failed
+  (`partial`/`error`) attempts in total; after that only `fetch --video ID` retries it, and `report`
+  lists it. A 200 response with unusable caption content (e.g. captions not generated yet for a
+  brand-new upload) is recorded with its first bytes and does not count toward the
+  unknown-error streak.
 - **Captions withheld for a PO token** are recorded as `error` (not `absent`), with the yt-dlp
   warning as detail. No PO-token provider is used (§6.6).
 - **Channel listings** from `discover` are stored as raw snapshots under

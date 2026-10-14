@@ -238,9 +238,9 @@ to your regular (non-root) user, and use `sudo systemctl ...` without `--user`.
 
 The job runs once a day at a randomized time (03:00 + up to 2 h): `discover` (self-throttled to
 weekly), `fetch` (self-capped at the daily allowance), then `normalize`. No inbound ports are
-needed; it only makes outbound HTTPS requests. Disk: about 1–1.5 MB per video (a 30-minute
-video measured ~1.4 MB, mostly `info.json` and the auto-caption json3), so roughly 1–2 GB for
-the whole channel without audio.
+needed; it only makes outbound HTTPS requests. Disk: about 1.3 MB per item on average (measured
+in the 20-video trial; mostly `info.json` and the auto-caption json3), so roughly 0.5 GB for
+the whole channel (411 items in October 2026) without audio.
 
 ### Monitoring
 

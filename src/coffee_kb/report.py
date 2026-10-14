@@ -20,7 +20,12 @@ from coffee_kb.manifest import (
 )
 from coffee_kb.normalize.pipeline import read_jsonl
 from coffee_kb.paths import DataPaths
-from coffee_kb.sources.youtube.fetch import SKIP_AVAILABILITY, required_components
+from coffee_kb.sources.youtube.fetch import (
+    MAX_FAILED_ATTEMPTS,
+    SKIP_AVAILABILITY,
+    required_components,
+    retry_exhausted,
+)
 
 SOURCE_TYPE = "youtube"
 
@@ -162,6 +167,7 @@ def build_report(
         },
         "errors": {k: v for k, v in sorted(errors.items())},
         "stale_normalization": stale,
+        "retry_exhausted": retry_exhausted(manifest, required),
         "safety": state,
         "last_runs": last_runs,
     }
@@ -202,6 +208,13 @@ def render_text(rep: dict[str, Any]) -> str:
                 add(f"    {r['item_id']}: {r['detail'][:200]}")
     else:
         add("Errors: none")
+    if rep["retry_exhausted"]:
+        add(
+            f"No longer retried automatically after {MAX_FAILED_ATTEMPTS} failed attempts "
+            f"({len(rep['retry_exhausted'])}): "
+            + ", ".join(rep["retry_exhausted"])
+            + "  → retry one with `coffee-kb fetch --video ID`"
+        )
     if rep["stale_normalization"]:
         add(
             f"Fetched but not normalized ({len(rep['stale_normalization'])}): "
