@@ -344,6 +344,14 @@ class Manifest:
         ).fetchall()
         return [r["started_at"] for r in rows]
 
+    def last_attempt_time(self, source_type: str) -> str | None:
+        row = self.conn.execute(
+            """SELECT MAX(COALESCE(finished_at, started_at)) AS t FROM fetch_attempts
+               WHERE source_type = ?""",
+            (source_type,),
+        ).fetchone()
+        return row["t"] if row is not None else None
+
     def attempts(self, source_type: str) -> list[sqlite3.Row]:
         return self.conn.execute(
             "SELECT * FROM fetch_attempts WHERE source_type = ? ORDER BY attempt_id", (source_type,)

@@ -1,0 +1,42 @@
+{
+  "id": "abcDEF12345",
+  "title": "Grind Size Explained (fixture)",
+  "description": "A hand-trimmed test fixture.\n0:00 Intro\n0:30 Grind size",
+  "upload_date": "20261001",
+  "duration": 150,
+  "tags": ["coffee", "grinding"],
+  "categories": ["Howto & Style"],
+  "chapters": [
+    {"start_time": 0.0, "end_time": 30.0, "title": "Intro"},
+    {"start_time": 30.0, "end_time": 150.0, "title": "Grind size"}
+  ],
+  "view_count": 123456,
+  "like_count": 7890,
+  "comment_count": 321,
+  "availability": "public",
+  "live_status": "not_live",
+  "channel": "James Hoffmann",
+  "channel_id": "UCxxxxxxxxxxxxxxxxxxxxxx",
+  "language": "en",
+  "webpage_url": "https://www.youtube.com/watch?v=abcDEF12345",
+  "original_url": "https://www.youtube.com/watch?v=abcDEF12345",
+  "subtitles": {
+    "en": [
+      {"ext": "json3", "url": "https://www.youtube.com/api/timedtext?v=abcDEF12345&lang=en&fmt=json3", "name": "English"},
+      {"ext": "vtt", "url": "https://www.youtube.com/api/timedtext?v=abcDEF12345&lang=en&fmt=vtt", "name": "English"}
+    ]
+  },
+  "automatic_captions": {
+    "de": [
+      {"ext": "json3", "url": "https://www.youtube.com/api/timedtext?v=abcDEF12345&kind=asr&lang=en&tlang=de&fmt=json3", "name": "German"}
+    ],
+    "en-orig": [
+      {"ext": "json3", "url": "https://www.youtube.com/api/timedtext?v=abcDEF12345&kind=asr&lang=en&fmt=json3&orig=1", "name": "English (Original)"},
+      {"ext": "vtt", "url": "https://www.youtube.com/api/timedtext?v=abcDEF12345&kind=asr&lang=en&fmt=vtt&orig=1", "name": "English (Original)"}
+    ],
+    "en": [
+      {"ext": "json3", "url": "https://www.youtube.com/api/timedtext?v=abcDEF12345&kind=asr&lang=en&fmt=json3", "name": "English"},
+      {"ext": "vtt", "url": "https://www.youtube.com/api/timedtext?v=abcDEF12345&kind=asr&lang=en&fmt=vtt", "name": "English"}
+    ]
+  }
+}

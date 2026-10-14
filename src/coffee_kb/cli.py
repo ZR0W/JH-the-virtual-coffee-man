@@ -19,6 +19,7 @@ from coffee_kb.clock import Clock, iso
 from coffee_kb.config import DEFAULT_CONFIG_NAME, Config, ConfigError, load_config
 from coffee_kb.manifest import Manifest
 from coffee_kb.paths import DataPaths
+from coffee_kb.runtime import Runtime
 
 log = logging.getLogger("coffee_kb")
 
@@ -48,6 +49,126 @@ def _ytdlp_version() -> str:
     except Exception:  # pragma: no cover - yt-dlp is a hard dependency
         return "unknown"
     return v
+
+
+# --- network-facing commands ------------------------------------------------------------
+
+
+def make_youtube_client(cfg: Config):  # seam for tests
+    from coffee_kb.sources.youtube.client import YtDlpClient
+
+    return YtDlpClient(cfg.fetch)
+
+
+def make_http_client(cfg: Config):  # seam for tests
+    from coffee_kb.sources.youtube.sponsorblock import make_client
+
+    return make_client(cfg.fetch.socket_timeout_s)
+
+
+def _args_dict(args: argparse.Namespace) -> dict:
+    out = {}
+    for k, v in vars(args).items():
+        if k == "handler":
+            continue
+        out[k] = str(v) if isinstance(v, Path) else v
+    return out
+
+
+def _refuse_if_cooling_down(paths: DataPaths, command: str) -> int | None:
+    try:
+        safety.ensure_no_cooldown(paths)
+    except safety.CooldownActive as exc:
+        print(
+            f"coffee-kb {command}: refusing to run: cooldown latch present "
+            f"({exc.latch.describe()}).\n"
+            "No YouTube requests were made. Wait it out; see `coffee-kb status`.",
+            file=sys.stderr,
+        )
+        return safety.EXIT_TEMPFAIL
+    return None
+
+
+def _run_networked(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Namespace, body):
+    """Cooldown check → run lock → manifest run record → body(runtime) → (exit code, summary)."""
+    command = args.command
+    refused = _refuse_if_cooling_down(paths, command)
+    if refused is not None:
+        return refused
+    try:
+        with safety.run_lock(paths, clock, command), Manifest(paths.manifest) as manifest:
+            http = make_http_client(cfg)
+            try:
+                rt = Runtime(
+                    cfg=cfg,
+                    paths=paths,
+                    manifest=manifest,
+                    clock=clock,
+                    pacer=safety.Pacer(cfg.fetch, clock),
+                    youtube=make_youtube_client(cfg),
+                    http=http,
+                    args=_args_dict(args),
+                )
+                rt.run_id = manifest.start_run(command, rt.args, iso(clock.now()))
+                try:
+                    code, summary = body(rt)
+                except KeyboardInterrupt:
+                    manifest.finish_run(rt.run_id, iso(clock.now()), 130, {"interrupted": True})
+                    raise
+                except Exception as exc:
+                    manifest.finish_run(
+                        rt.run_id, iso(clock.now()), EXIT_ERROR, {"crash": repr(exc)}
+                    )
+                    raise
+                manifest.finish_run(rt.run_id, iso(clock.now()), code, summary)
+                return code
+            finally:
+                http.close()
+    except safety.LockHeld as exc:
+        print(f"coffee-kb {command}: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+
+def cmd_discover(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Namespace) -> int:
+    from coffee_kb.sources.youtube.discover import run_discover
+
+    def body(rt: Runtime):
+        result = run_discover(rt, force=args.force)
+        return result.exit_code, result.summary()
+
+    return _run_networked(cfg, paths, clock, args, body)
+
+
+def cmd_fetch(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Namespace) -> int:
+    from coffee_kb.sources.youtube.fetch import FetchOptions, run_fetch
+
+    if args.limit is not None and args.limit < 1:
+        print("coffee-kb fetch: --limit must be at least 1", file=sys.stderr)
+        return EXIT_USAGE
+    opts = FetchOptions(
+        limit=args.limit,
+        videos=list(args.video or []),
+        since=args.since,
+        item_type=args.type,
+        audio=bool(args.audio or cfg.fetch.audio),
+        refresh=args.refresh,
+        dry_run=args.dry_run,
+    )
+    if opts.audio:
+        log.warning("audio download is ON (heaviest, most scrutinized traffic; see README)")
+
+    def body(rt: Runtime):
+        summary = run_fetch(rt, opts)
+        return summary.exit_code, summary.as_dict()
+
+    if opts.dry_run:
+        latch = safety.read_cooldown(paths)
+        if latch is not None:
+            print(f"note: cooldown latch present ({latch.describe()}); a real fetch would refuse.")
+        with Manifest(paths.manifest) as manifest:
+            rt = Runtime(cfg, paths, manifest, clock, safety.Pacer(cfg.fetch, clock))
+            return run_fetch(rt, opts).exit_code
+    return _run_networked(cfg, paths, clock, args, body)
 
 
 # --- status / clear-cooldown ----------------------------------------------------------------
@@ -127,6 +248,32 @@ def cmd_clear_cooldown(
     return EXIT_OK
 
 
+def _video_arg(value: str) -> str:
+    """A video ID, or a YouTube URL containing one."""
+    import re
+
+    from coffee_kb.paths import InvalidIdError, check_item_id
+
+    value = value.strip()
+    m = re.search(r"(?:[?&]v=|youtu\.be/|/shorts/|/live/|/embed/)([A-Za-z0-9_-]{11})", value)
+    if m:
+        value = m.group(1)
+    try:
+        return check_item_id(value)
+    except InvalidIdError:
+        raise argparse.ArgumentTypeError(f"not a YouTube video ID or URL: {value!r}") from None
+
+
+def _date_arg(value: str) -> str:
+    import datetime as _dt
+
+    try:
+        _dt.date.fromisoformat(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a YYYY-MM-DD date: {value!r}") from None
+    return value
+
+
 # --- parser -----------------------------------------------------------------------------------
 
 
@@ -144,6 +291,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     sub = p.add_subparsers(dest="command", required=True, metavar="COMMAND")
+
+    s = sub.add_parser(
+        "discover", help="refresh the channel listing into the manifest [talks to YouTube]"
+    )
+    s.add_argument(
+        "--force",
+        action="store_true",
+        help="run even if discover ran within discover_min_interval_days (cooldown still applies)",
+    )
+    s.set_defaults(handler=cmd_discover)
+
+    s = sub.add_parser(
+        "fetch",
+        help="fetch metadata, captions, SponsorBlock for not-yet-complete videos [talks to YouTube]",
+    )
+    s.add_argument("--limit", type=int, help="at most N videos (clamped to the daily allowance)")
+    s.add_argument(
+        "--video",
+        action="append",
+        type=_video_arg,
+        metavar="ID",
+        help="fetch this video ID (repeatable)",
+    )
+    s.add_argument(
+        "--since", type=_date_arg, metavar="YYYY-MM-DD", help="only videos uploaded on/after"
+    )
+    s.add_argument("--type", choices=["video", "short", "stream"], help="only this item type")
+    s.add_argument("--audio", action="store_true", help="also download audio (off by default)")
+    s.add_argument("--refresh", action="store_true", help="new snapshot even if one is complete")
+    s.add_argument("--dry-run", action="store_true", help="show what would be fetched; no network")
+    s.set_defaults(handler=cmd_fetch)
 
     s = sub.add_parser("status", help="cooldown state, daily cap, next eligible time [offline]")
     s.add_argument("--format", choices=["text", "json"], default="text")

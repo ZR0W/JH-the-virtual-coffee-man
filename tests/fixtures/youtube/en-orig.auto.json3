@@ -1,0 +1,17 @@
+{
+  "wireMagic": "pb3",
+  "pens": [{}],
+  "wsWinStyles": [{}, {"mhModeHint": 2, "juJustifCode": 0, "sdScrollDir": 3}],
+  "wpWinPositions": [{}, {"apPoint": 6, "ahHorPos": 20, "avVerPos": 100, "rcRows": 2, "ccCols": 40}],
+  "events": [
+    {"tStartMs": 0, "dDurationMs": 40000, "id": 1, "wpWinPosId": 1, "wsWinStyleId": 1},
+    {"tStartMs": 160, "dDurationMs": 4560, "wWinId": 1, "segs": [{"utf8": "hi", "acAsrConf": 0}, {"utf8": " I'm", "tOffsetMs": 400, "acAsrConf": 0}, {"utf8": " making", "tOffsetMs": 720, "acAsrConf": 0}, {"utf8": " coffee", "tOffsetMs": 1120, "acAsrConf": 0}]},
+    {"tStartMs": 2470, "dDurationMs": 2250, "wWinId": 1, "aAppend": 1, "segs": [{"utf8": "\n"}]},
+    {"tStartMs": 2480, "dDurationMs": 5000, "wWinId": 1, "segs": [{"utf8": "[Music]"}]},
+    {"tStartMs": 12000, "dDurationMs": 4000, "wWinId": 1, "segs": [{"utf8": "this", "acAsrConf": 0}, {"utf8": " video", "tOffsetMs": 240, "acAsrConf": 0}, {"utf8": " is", "tOffsetMs": 480, "acAsrConf": 0}, {"utf8": " sponsored", "tOffsetMs": 640, "acAsrConf": 0}]},
+    {"tStartMs": 13990, "dDurationMs": 2010, "wWinId": 1, "aAppend": 1, "segs": [{"utf8": "\n"}]},
+    {"tStartMs": 31000, "dDurationMs": 5000, "wWinId": 1, "segs": [{"utf8": "finer", "acAsrConf": 0}, {"utf8": " grind", "tOffsetMs": 320, "acAsrConf": 0}, {"utf8": " means", "tOffsetMs": 640, "acAsrConf": 0}]},
+    {"tStartMs": 32990, "dDurationMs": 3010, "wWinId": 1, "aAppend": 1, "segs": [{"utf8": "\n"}]},
+    {"tStartMs": 33000, "dDurationMs": 4000, "wWinId": 1, "segs": [{"utf8": "more", "acAsrConf": 0}, {"utf8": " extraction", "tOffsetMs": 400, "acAsrConf": 0}]}
+  ]
+}
