@@ -274,16 +274,20 @@ uv run coffee-kb collector status      # next run time + safety state
 The first scheduled run is the first server fetch; no need to start one by hand
 (`coffee-kb collector run-now` exists if you want to).
 
-**5. Open the dashboard from the PC.** The web app listens on `[web] host`/`port` in
-`config.toml` (default `127.0.0.1:8787`, i.e. only on the server itself). Two ways in:
+**5. Open the dashboard from the PC.** The web app listens on the LAN (`[web] host = "0.0.0.0"`,
+`port = 8787` in `config.toml`). Allow that port from your home subnet only, then browse to
+`http://<server-LAN-IP>:8787/` from any device at home:
 
-- **SSH tunnel (default, nothing to open):** on the PC run
-  `ssh -N -L 8787:127.0.0.1:8787 <server>` and browse to <http://localhost:8787/>.
-- **LAN:** set `host = "0.0.0.0"` in the server's `config.toml`, re-run
-  `uv run coffee-kb web install`, allow the port from your home subnet only
-  (`sudo ufw allow from 192.168.1.0/24 to any port 8787 proto tcp`, adjusting the subnet), then
-  browse to `http://<server>:8787/` from any device at home. Anyone on your Wi-Fi can then see
-  the dashboard (read-only; it shows titles, counts and logs, not transcripts).
+```bash
+ip -4 addr show | grep inet                     # your LAN address/subnet, e.g. 192.168.1.x/24
+sudo ufw allow from 192.168.1.0/24 to any port 8787 proto tcp comment 'coffee-kb web (LAN only)'
+sudo ufw status numbered
+```
+
+Never forward this port on the router. Anyone on your Wi-Fi can see the page (read-only; titles,
+counts and logs, not transcripts). To keep it server-only instead, set `host = "127.0.0.1"`,
+re-run `uv run coffee-kb web install`, delete the ufw rule, and use an SSH tunnel:
+`ssh -N -L 8787:127.0.0.1:8787 <server>` then <http://localhost:8787/>.
 
 The page refreshes itself every minute. `/api/status` returns the same data as JSON and
 `/logs?n=500` the raw log tail.

@@ -29,9 +29,10 @@ audio = false                      # opt-in only; see README before enabling
 
 [web]
 # The read-only status web app (`coffee-kb web serve` / `coffee-kb web install`).
-# "127.0.0.1": only reachable on this machine (from the PC via an SSH tunnel).
-# "0.0.0.0": reachable on the LAN; add a firewall rule limited to your home subnet.
-host = "127.0.0.1"
+# "0.0.0.0": reachable on the LAN. Pair it with a firewall rule limited to your home subnet
+#            (README, "Home server"); the router does not forward it to the internet.
+# "127.0.0.1": only reachable on this machine (use an SSH tunnel from the PC).
+host = "0.0.0.0"
 port = 8787
 
 [sponsorblock]

@@ -54,7 +54,7 @@ class FetchConfig:
 class WebConfig:
     # 127.0.0.1 = only this machine (use an SSH tunnel); 0.0.0.0 = the whole LAN (pair it with
     # a firewall rule limited to your home subnet). The web app is read-only either way.
-    host: str = "127.0.0.1"
+    host: str = "0.0.0.0"
     port: int = 8787
 
 
