@@ -9,7 +9,7 @@ Status: Phase 1 (data collection) in progress. Phases 2–5 are design notes onl
 3. Repository layout
 4. Phase 1 — what gets collected
 5. Phase 1 — storage formats
-6. Phase 1 — CLI and pipeline behavior (incl. §6.6 YouTube request safety, §6.7 rollout: cloud → local → server)
+6. Phase 1 — CLI and pipeline behavior (incl. §6.6 YouTube request safety, §6.7 rollout: cloud → local → server, §6.8 implementation notes)
 7. Phases 2–5 — roadmap (not to be built yet)
 8. Visualization and interface catalog
 9. Legal, scope, and ethics notes
@@ -445,6 +445,42 @@ Server setup outline (to be confirmed with the user at checkpoint D):
    per day).
 
 The PC and the server share the household's public IP, so §6.6 applies equally to both.
+
+### 6.8 Implementation notes (Phase 1 as built)
+
+Where the code refines or departs from the text above:
+
+- **Request pacing.** yt-dlp's `sleep_interval_requests` is a fixed value per `YoutubeDL`
+  instance (there is no `max_sleep_interval_requests`). Each video gets its own session with a
+  value drawn from `[sleep_between_requests_s, sleep_between_requests_max_s]`.
+- **Captions** are downloaded by `fetch.py` itself through yt-dlp's HTTP stack (`ydl.urlopen`),
+  with an explicit `sleep_before_subtitles_s` before each, so HTTP status codes and HTML-instead
+  -of-JSON responses are classified exactly. One English manual track and one auto track
+  (yt-dlp's `<lang>-orig`, never a machine translation) per video; files are
+  `captions/<lang>.<manual|auto>.<json3|vtt>`.
+- **Stop on the first warning sign** also covers yt-dlp *warnings*: the yt-dlp logger raises on
+  a block-signal warning, aborting extraction before yt-dlp tries another endpoint.
+- **Between-video pacing across runs.** The first video of a run waits out the remainder of the
+  60–120 s delay since the last recorded attempt (so back-to-back `--video` runs are paced too).
+- **Daily cap** counts rows in a `fetch_attempts` table, written before the first request for a
+  video. Interrupted and failed attempts count.
+- **Completeness** (what `fetch` skips) requires `metadata`, `captions_manual`, `captions_auto`
+  (and `audio` when requested) to be `ok`/`absent` in the latest snapshot. SponsorBlock is not
+  required, so an outage of that service never causes YouTube re-fetches; its errors show in
+  `report` and are fixed with `fetch --refresh --video ID`.
+- **Captions withheld for a PO token** are recorded as `error` (not `absent`), with the yt-dlp
+  warning as detail. No PO-token provider is used (§6.6).
+- **Channel listings** from `discover` are stored as raw snapshots under
+  `raw/youtube/_channel/snapshots/`, so `item_type` (from the tab) stays rebuildable from `raw/`.
+- **Manifest additions:** `items.listing_rank` (newest-first order when upload dates are unknown
+  from flat listings), `listing_status = 'not_yet_listed'` (fetched via `--video` before
+  `discover`), `runs.exit_code`, and the `fetch_attempts` table.
+- **Extra safety:** a run lock (`data/.lock`, stale after 6 h) so runs never overlap; config
+  floors also on `transient_retry_wait_s` (60 s), `discover_min_interval_days` (7) and
+  `cooldown_min_hours` (48); unknown config keys are errors; cleared latches are archived in
+  `data/cooldown_history/`.
+- **Not implemented (TODO if wanted):** pinned comments, playlist membership,
+  `rebuild-manifest`.
 
 ---
 

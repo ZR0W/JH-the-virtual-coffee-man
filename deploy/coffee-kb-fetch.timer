@@ -1,0 +1,13 @@
+# Daily trigger for coffee-kb-fetch.service. TEMPLATE: the run window is finalized at
+# checkpoint D. A randomized start avoids looking like a scripted fixed-time client.
+
+[Unit]
+Description=Run coffee-kb collection once a day at a randomized time
+
+[Timer]
+OnCalendar=*-*-* 03:00
+RandomizedDelaySec=2h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

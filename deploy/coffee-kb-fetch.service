@@ -1,0 +1,41 @@
+# coffee-kb daily collection job. TEMPLATE: finalize together at checkpoint D.
+#
+# Replace the placeholders before installing:
+#   @REPO_DIR@  absolute path of the coffee-kb checkout on the server
+#   @UV@        absolute path of the uv binary (`command -v uv`, often ~/.local/bin/uv)
+#
+# Recommended: install as a *user* unit (~/.config/systemd/user/) and run
+#   loginctl enable-linger <your-user>
+# so it runs without an open login session. For a *system* unit
+# (/etc/systemd/system/), uncomment User= and set it to your regular, non-root user.
+#
+# What it does, in order:
+#   1. discover  - self-throttles to once a week; ignored failure (leading "-") because
+#                  fetch re-checks the cooldown latch itself before any request.
+#   2. fetch     - self-capped at the rolling 24 h allowance (30 videos), 60-120 s apart.
+#                  Exits 75 if a block signal is seen or data/COOLDOWN exists: the unit then
+#                  shows as failed, and nothing is retried (Restart=no).
+#   3. normalize - offline; runs even when fetch failed (ExecStopPost) so whatever was
+#                  fetched is normalized.
+
+[Unit]
+Description=coffee-kb daily collection (discover weekly, capped fetch, normalize)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+#User=@USER@
+WorkingDirectory=@REPO_DIR@
+Nice=10
+IOSchedulingClass=idle
+# 30 videos at 60-120 s apart is ~45-75 min; leave generous headroom.
+TimeoutStartSec=4h
+Restart=no
+# To be decided at checkpoint D: upgrade yt-dlp automatically before each run?
+# (This rewrites uv.lock in the checkout.)
+#ExecStartPre=@UV@ lock --upgrade-package yt-dlp
+#ExecStartPre=@UV@ sync
+ExecStart=-@UV@ run coffee-kb discover
+ExecStart=@UV@ run coffee-kb fetch
+ExecStopPost=@UV@ run coffee-kb normalize
