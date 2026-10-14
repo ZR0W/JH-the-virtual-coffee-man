@@ -488,6 +488,15 @@ Where the code refines or departs from the text above:
   floors also on `transient_retry_wait_s` (60 s), `discover_min_interval_days` (7) and
   `cooldown_min_hours` (48); unknown config keys are errors; cleared latches are archived in
   `data/cooldown_history/`.
+- **Wait for cap slots.** The rolling 24 h cap plus a randomized daily start would leave many
+  days with no allowance (yesterday's run still inside the window). The timer runs
+  `fetch --wait-for-cap`: when the cap is full it sleeps until the next slot frees (at most
+  `max_wait_for_cap_minutes`, default 180, ceiling 240) and still checks the cap before every
+  video. Waiting only ever makes a run slower, never faster.
+- **Dashboard.** `coffee-kb dashboard` writes a self-contained, offline HTML status page
+  (health banner, progress, cap usage, per-day chart, recent runs, errors, timer and journal on
+  Linux). `tools/coffee-kb-dashboard.ps1` regenerates it on the server over SSH and opens it on
+  the PC: no web server, no open port.
 - **Not implemented (TODO if wanted):** pinned comments, playlist membership,
   `rebuild-manifest`.
 
@@ -672,3 +681,5 @@ Record the answer here when decided.
 | Project name | `coffee-kb` (working name) |
 | Use official YouTube Data API for discover/metadata (§6.6)? | No for now; revisit after the 20-video trial |
 | Daily cap / pacing | 30 videos per 24 h, 60–120 s between videos |
+| Server deployment (checkpoint D) | **Decided:** systemd user unit + linger, repo at `~/coffee-kb`, daily 03:00 + 0–2 h randomized, `fetch --wait-for-cap`, yt-dlp upgraded before each run, monitoring by hand via `status`/`report` and the PC dashboard |
+| JS runtime (deno) for yt-dlp | **Not installed.** Metadata and captions work without it (checkpoints B and C); revisit only if captions start failing |

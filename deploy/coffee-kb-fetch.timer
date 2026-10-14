@@ -1,5 +1,6 @@
-# Daily trigger for coffee-kb-fetch.service. TEMPLATE: the run window is finalized at
-# checkpoint D. A randomized start avoids looking like a scripted fixed-time client.
+# Daily trigger for coffee-kb-fetch.service (user unit). Starts between 03:00 and 05:00 server
+# local time, randomized so it doesn't look like a fixed-time script and finishes before the
+# household is up. Persistent=true runs a missed day after the machine was off.
 
 [Unit]
 Description=Run coffee-kb collection once a day at a randomized time

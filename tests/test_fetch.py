@@ -601,3 +601,57 @@ def test_invalid_caption_content_does_not_feed_unknown_streak(env):
     assert env.run("fetch") == 0
     assert not env.paths.cooldown.exists()
     assert len(_video_calls(env)) == 4
+
+
+def _fill_cap_yesterday(env, start_hours_ago, n=30, minutes_apart=2):
+    with env.manifest() as m:
+        t0 = env.clock.now() - timedelta(hours=start_hours_ago)
+        for i in range(n):
+            m.record_attempt_start(
+                "youtube", f"old{i:08d}", None, iso(t0 + timedelta(minutes=minutes_apart * i))
+            )
+
+
+def test_wait_for_cap_waits_for_slots_and_fetches_full_batch(env):
+    # Yesterday's run started 23 h ago (60 min later in the day than today's start).
+    _fill_cap_yesterday(env, start_hours_ago=23)
+    ids = _ids(35)
+    _list(env, ids)
+    for v in ids:
+        env.yt.add_video(v)
+    assert env.run("fetch") == 0  # without the flag: exits at once
+    assert env.yt.network_calls() == 0
+    start = env.clock.now()
+    assert env.run("fetch", "--wait-for-cap") == 0
+    assert len(_video_calls(env)) == 30
+    # The first fetch only after the first old attempt left the window (≈ 60 min wait).
+    with env.manifest() as m:
+        new = [a for a in m.attempts("youtube") if not a["item_id"].startswith("old")]
+        first = min(a["started_at"] for a in new)
+        assert first > iso(start + timedelta(minutes=59))
+        # Never more than 30 attempts in any rolling 24 h window.
+        times = sorted(a["started_at"] for a in m.attempts("youtube"))
+    from coffee_kb.clock import parse_iso
+
+    ts = [parse_iso(t) for t in times]
+    for i, t in enumerate(ts):
+        assert sum(1 for u in ts[i:] if u < t + timedelta(hours=24)) <= 30
+
+
+def test_wait_for_cap_respects_budget(env, capsys):
+    _fill_cap_yesterday(env, start_hours_ago=20)  # first slot frees in 4 h > 3 h budget
+    ids = _ids(3)
+    _list(env, ids)
+    for v in ids:
+        env.yt.add_video(v)
+    assert env.run("fetch", "--wait-for-cap") == 0
+    assert env.yt.network_calls() == 0
+    assert env.clock.sleeps == []
+    assert "daily cap reached" in capsys.readouterr().err
+
+
+def test_wait_for_cap_budget_validated(tmp_path):
+    from coffee_kb.config import ConfigError, config_from_dict
+
+    with pytest.raises(ConfigError):
+        config_from_dict({"fetch": {"max_wait_for_cap_minutes": 600}}, base_dir=tmp_path)

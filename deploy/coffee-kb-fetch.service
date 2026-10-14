@@ -1,41 +1,35 @@
-# coffee-kb daily collection job. TEMPLATE: finalize together at checkpoint D.
+# coffee-kb daily collection job: systemd USER unit (agreed at checkpoint D).
 #
-# Replace the placeholders before installing:
-#   @REPO_DIR@  absolute path of the coffee-kb checkout on the server
-#   @UV@        absolute path of the uv binary (`command -v uv`, often ~/.local/bin/uv)
+# Install into ~/.config/systemd/user/ with the placeholders filled in (README, "Home server"):
+#   @REPO_DIR@  absolute path of the coffee-kb checkout
+#   @UV@        absolute path of the uv binary (`command -v uv`, usually ~/.local/bin/uv)
+# and run `sudo loginctl enable-linger $USER` once so it runs without an open login session.
 #
-# Recommended: install as a *user* unit (~/.config/systemd/user/) and run
-#   loginctl enable-linger <your-user>
-# so it runs without an open login session. For a *system* unit
-# (/etc/systemd/system/), uncomment User= and set it to your regular, non-root user.
-#
-# What it does, in order:
-#   1. discover  - self-throttles to once a week; ignored failure (leading "-") because
-#                  fetch re-checks the cooldown latch itself before any request.
-#   2. fetch     - self-capped at the rolling 24 h allowance (30 videos), 60-120 s apart.
-#                  Exits 75 if a block signal is seen or data/COOLDOWN exists: the unit then
-#                  shows as failed, and nothing is retried (Restart=no).
-#   3. normalize - offline; runs even when fetch failed (ExecStopPost) so whatever was
-#                  fetched is normalized.
+# Order of a run:
+#   0. upgrade yt-dlp (an outdated extractor is the most common cause of failures). A failed
+#      upgrade (e.g. PyPI unreachable) does not stop the run ("-" prefix).
+#   1. discover  - self-throttles to once a week; failure ignored ("-") because fetch re-checks
+#                  the cooldown latch itself before any request.
+#   2. fetch     - --wait-for-cap: if the rolling 24 h cap is still full from yesterday's run,
+#                  waits (up to max_wait_for_cap_minutes) for slots instead of exiting. Exits 75
+#                  on a block signal or while data/COOLDOWN exists; the unit then shows as failed
+#                  and nothing is retried (Restart=no).
+#   3. normalize + dashboard - offline; run even when fetch failed (ExecStopPost).
 
 [Unit]
 Description=coffee-kb daily collection (discover weekly, capped fetch, normalize)
-Wants=network-online.target
-After=network-online.target
 
 [Service]
 Type=oneshot
-#User=@USER@
 WorkingDirectory=@REPO_DIR@
 Nice=10
 IOSchedulingClass=idle
-# 30 videos at 60-120 s apart is ~45-75 min; leave generous headroom.
-TimeoutStartSec=4h
+# Up to 3 h waiting for cap slots + ~60-75 min for 30 videos; generous headroom.
+TimeoutStartSec=6h
 Restart=no
-# To be decided at checkpoint D: upgrade yt-dlp automatically before each run?
-# (This rewrites uv.lock in the checkout.)
-#ExecStartPre=@UV@ lock --upgrade-package yt-dlp
-#ExecStartPre=@UV@ sync
+ExecStartPre=-@UV@ lock --upgrade-package yt-dlp
+ExecStartPre=-@UV@ sync
 ExecStart=-@UV@ run coffee-kb discover
-ExecStart=@UV@ run coffee-kb fetch
+ExecStart=@UV@ run coffee-kb fetch --wait-for-cap
 ExecStopPost=@UV@ run coffee-kb normalize
+ExecStopPost=@UV@ run coffee-kb dashboard

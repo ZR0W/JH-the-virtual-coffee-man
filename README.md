@@ -204,56 +204,113 @@ immediately and wrote `data/COOLDOWN`.
 
 ---
 
-## Moving to the home server (checkpoint D)
+## Home server (Ubuntu, daily timer)
 
-The details (user vs. system unit, paths, run window, monitoring, automatic yt-dlp upgrades)
-get decided together at checkpoint D. The outline:
+The collection runs on the home server as a **systemd user unit** once a day, and you watch it
+from your PC with a dashboard. Only one machine fetches at a time: once the server has the data,
+the PC stops fetching.
 
-1. On the server (Ubuntu): install `uv`, clone the repo, `uv sync`, upgrade yt-dlp.
-2. **Stop fetching on the PC.** Only one machine fetches at a time.
-3. Copy the PC's `data/` directory to the server's checkout instead of re-fetching, e.g. from
-   PowerShell on the PC: `scp -r .\data <user>@<server>:<path-to-coffee-kb>/`
-   (or `rsync -a data/ <user>@<server>:<path>/data/` from a Linux shell). The server continues
-   where the PC stopped, and the daily cap counts the PC's recent fetches.
-4. On the server: `uv run coffee-kb status` and `uv run coffee-kb report` to confirm the copied
-   state, then one manual `uv run coffee-kb fetch --limit 1`.
-5. Install the timer (below).
+### One-time setup
 
-### Timer (systemd user unit, recommended)
-
-The files in [deploy/](deploy/) are templates: replace `@REPO_DIR@` and `@UV@` first.
+**1. Server: install and clone** (SSH in from the PC):
 
 ```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh      # uv in ~/.local/bin; open a new shell
+git clone https://github.com/ZR0W/JH-the-virtual-coffee-man.git ~/coffee-kb
+cd ~/coffee-kb
+uv sync
+uv run pytest -q                                     # offline sanity check
+```
+
+**2. PC: hand the data over and retire the PC as a fetcher** (PowerShell, in the PC's checkout).
+Copying `data/` carries the manifest and the fetch history, so the server's daily cap counts
+the PC's recent fetches and it continues exactly where the PC stopped.
+
+```powershell
+tar -czf $env:TEMP\coffee-kb-data.tgz data
+scp $env:TEMP\coffee-kb-data.tgz <server>:
+# Latch the PC so a stray `fetch` here can never run again from this copy:
+$now = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+Set-Content -Encoding ascii data\COOLDOWN "{`"reason`": `"fetching moved to the home server; do not fetch from this PC`", `"detected_at`": `"$now`"}"
+```
+
+**3. Server: unpack and check**:
+
+```bash
+cd ~/coffee-kb
+tar -xzf ~/coffee-kb-data.tgz && rm ~/coffee-kb-data.tgz
+rm -f data/.lock data/*.txt data/trial-fetch.pid      # PC-only leftovers
+uv run coffee-kb status                               # cooldown: none; cap counts the PC's runs
+uv run coffee-kb report
+```
+
+**4. Server: install the timer** (user unit + linger):
+
+```bash
+cd ~/coffee-kb
 mkdir -p ~/.config/systemd/user
-sed -e "s|@REPO_DIR@|$PWD|g" -e "s|@UV@|$(command -v uv)|g" \
+sed -e "s|@REPO_DIR@|$HOME/coffee-kb|g" -e "s|@UV@|$HOME/.local/bin/uv|g" \
     deploy/coffee-kb-fetch.service > ~/.config/systemd/user/coffee-kb-fetch.service
 cp deploy/coffee-kb-fetch.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now coffee-kb-fetch.timer
-sudo loginctl enable-linger "$USER"     # run even when you're not logged in
+sudo loginctl enable-linger "$USER"                   # the only sudo: run without a login session
+systemctl --user list-timers coffee-kb-fetch.timer    # shows the next run (03:00–05:00)
 ```
 
-For a system unit instead, put the files in `/etc/systemd/system/`, uncomment and set `User=`
-to your regular (non-root) user, and use `sudo systemctl ...` without `--user`.
+The first scheduled run is the first server fetch; there's no need to start one by hand.
 
-The job runs once a day at a randomized time (03:00 + up to 2 h): `discover` (self-throttled to
-weekly), `fetch` (self-capped at the daily allowance), then `normalize`. No inbound ports are
-needed; it only makes outbound HTTPS requests. Disk: about 1.3 MB per item on average (measured
-in the 20-video trial; mostly `info.json` and the auto-caption json3), so roughly 0.5 GB for
-the whole channel (411 items in October 2026) without audio.
+**5. PC: the dashboard.** From the PC's checkout:
 
-### Monitoring
+```powershell
+.\tools\coffee-kb-dashboard.ps1 -Server <server>
+```
+
+It regenerates the page on the server over SSH, copies it to `%TEMP%` and opens it in your
+browser. Nothing is served or opened on the network. Tip: a function in your PowerShell
+`$PROFILE` makes it one word, e.g. `function ckb { & C:\path\to\checkout\tools\coffee-kb-dashboard.ps1 -Server <server> }`.
+
+### What a daily run does
+
+Between 03:00 and 05:00 (randomized): upgrade yt-dlp → `discover` (only if a week has passed) →
+`fetch --wait-for-cap` (up to 30 videos, 60–120 s apart; if yesterday's run is still inside
+the rolling 24 h window it waits for slots, up to 3 h) → `normalize` → `dashboard`. Roughly an
+hour of mostly sleeping. The backlog finishes in about two weeks; after that a run picks up the
+day's new uploads in a few minutes.
+
+### Day to day
+
+Nothing is required. Glance at the dashboard when you like (every few days is plenty):
+
+| Dashboard banner | Meaning | What to do |
+|---|---|---|
+| ✔ Healthy | Collecting on schedule | Nothing |
+| ⚠ Healthy, with item errors | Some videos have a missing component | Nothing; they're retried up to 3 times automatically. Persistent ones are listed; retry with `uv run coffee-kb fetch --video ID` |
+| ⚠ No recent fetch | No successful fetch for 36 h | `systemctl --user list-timers`; `journalctl --user -u coffee-kb-fetch -n 100` |
+| ⚠ Last fetch had errors | Exit code 1 | Read the errors and the log section; tell your agent if it's unclear |
+| ✖ Cooldown latch active | YouTube showed a block signal; the job stopped itself | Do nothing for 48 h. Then follow [If a cooldown latch trips](#if-a-cooldown-latch-trips). Every daily run exits immediately without network until you clear it |
+
+Useful commands on the server (`cd ~/coffee-kb` first):
 
 ```bash
-systemctl --user list-timers coffee-kb-fetch.timer
-journalctl --user -u coffee-kb-fetch -n 200
-uv run coffee-kb status
-uv run coffee-kb report
+uv run coffee-kb status                              # cooldown, cap, next eligible time
+uv run coffee-kb report                              # coverage and errors
+systemctl --user list-timers coffee-kb-fetch.timer   # next run
+systemctl --user status coffee-kb-fetch              # last run result
+journalctl --user -u coffee-kb-fetch -f              # follow a run live
 ```
 
-A run that ends with exit code 75 means a block signal or an active cooldown latch; see
-[If a cooldown latch trips](#if-a-cooldown-latch-trips). The timer keeps firing, but every run
-exits immediately without network access until you clear the latch.
+**Updating the code:** the timer upgrades yt-dlp, which changes `uv.lock` in the checkout, so
+discard that before pulling: `git checkout uv.lock && git pull && uv sync`.
+
+**Pausing / removing:** `systemctl --user disable --now coffee-kb-fetch.timer` pauses it. To
+remove everything: also delete the two files in `~/.config/systemd/user/`, run
+`sudo loginctl disable-linger $USER`, and `rm -rf ~/coffee-kb`. Nothing else is installed
+outside your home directory (uv lives in `~/.local/bin`, its caches in `~/.cache/uv` and
+`~/.local/share/uv`).
+
+**Disk and network:** about 1.3 MB per video, roughly 0.5 GB for the whole channel. Outbound
+HTTPS only; no ports to open.
 
 ---
 

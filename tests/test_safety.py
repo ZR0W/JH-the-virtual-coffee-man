@@ -371,7 +371,7 @@ def test_run_lock_is_exclusive(data_paths, clock):
 
 def test_stale_lock_is_taken_over(data_paths, clock):
     data_paths.root.mkdir(parents=True)
-    old = iso(clock.now() - timedelta(hours=7))
+    old = iso(clock.now() - timedelta(hours=9))
     data_paths.lock.write_text(json.dumps({"pid": 1, "command": "fetch", "started_at": old}))
     with safety.run_lock(data_paths, clock, "fetch"):
         info = json.loads(data_paths.lock.read_text())

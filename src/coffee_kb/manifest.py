@@ -314,6 +314,11 @@ class Manifest:
             (command,),
         ).fetchone()
 
+    def recent_runs(self, limit: int = 10) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM runs ORDER BY started_at DESC, run_id DESC LIMIT ?", (limit,)
+        ).fetchall()
+
     def last_run(self, command: str) -> sqlite3.Row | None:
         return self.conn.execute(
             "SELECT * FROM runs WHERE command = ? ORDER BY started_at DESC, run_id DESC LIMIT 1",

@@ -46,7 +46,9 @@ MIN_TRANSIENT_RETRY_WAIT_S = 60.0
 MIN_COOLDOWN_HOURS = 48.0
 UNKNOWN_ERROR_STREAK_LIMIT = 3
 CAP_WINDOW = timedelta(hours=24)
-STALE_LOCK_AGE = timedelta(hours=6)
+MAX_WAIT_FOR_CAP_MINUTES_CEILING = 240.0
+# Longer than the longest legitimate run (max cap wait + a full 30-video batch).
+STALE_LOCK_AGE = timedelta(hours=8)
 
 EXIT_TEMPFAIL = 75  # EX_TEMPFAIL: blocked or cooling down; the timer log shows it clearly
 
@@ -78,6 +80,11 @@ def validate_fetch_config(fc: FetchConfig) -> None:
     floor("transient_retry_wait_s", fc.transient_retry_wait_s, MIN_TRANSIENT_RETRY_WAIT_S)
     floor("cooldown_min_hours", fc.cooldown_min_hours, MIN_COOLDOWN_HOURS)
     floor("socket_timeout_s", fc.socket_timeout_s, 1)
+    if not 0 <= fc.max_wait_for_cap_minutes <= MAX_WAIT_FOR_CAP_MINUTES_CEILING:
+        problems.append(
+            f"max_wait_for_cap_minutes = {fc.max_wait_for_cap_minutes} must be between 0 and "
+            f"{MAX_WAIT_FOR_CAP_MINUTES_CEILING:.0f}"
+        )
     if not 1 <= fc.max_videos_per_24h <= MAX_VIDEOS_PER_24H_CEILING:
         problems.append(
             f"max_videos_per_24h = {fc.max_videos_per_24h} must be between 1 and "

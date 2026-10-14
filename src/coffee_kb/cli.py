@@ -153,6 +153,7 @@ def cmd_fetch(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Namesp
         audio=bool(args.audio or cfg.fetch.audio),
         refresh=args.refresh,
         dry_run=args.dry_run,
+        wait_for_cap=args.wait_for_cap,
     )
     if opts.audio:
         log.warning("audio download is ON (heaviest, most scrutinized traffic; see README)")
@@ -196,6 +197,18 @@ def cmd_report(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Names
         print(json.dumps(rep, indent=2, ensure_ascii=False))
     else:
         print(render_text(rep))
+    return EXIT_OK
+
+
+def cmd_dashboard(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Namespace) -> int:
+    from coffee_kb.dashboard import build_dashboard, render_html, systemd_info
+
+    with Manifest(paths.manifest) as manifest:
+        data = build_dashboard(cfg, paths, manifest, clock.now(), systemd_info())
+    out = args.output or (paths.root / "dashboard.html")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(render_html(data), encoding="utf-8")
+    print(out)
     return EXIT_OK
 
 
@@ -349,6 +362,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--audio", action="store_true", help="also download audio (off by default)")
     s.add_argument("--refresh", action="store_true", help="new snapshot even if one is complete")
     s.add_argument("--dry-run", action="store_true", help="show what would be fetched; no network")
+    s.add_argument(
+        "--wait-for-cap",
+        action="store_true",
+        help="if the rolling 24 h cap is full, wait (up to max_wait_for_cap_minutes) for slots "
+        "to free up instead of exiting; used by the daily timer",
+    )
     s.set_defaults(handler=cmd_fetch)
 
     s = sub.add_parser(
@@ -366,6 +385,12 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("report", help="coverage, errors and safety state [offline]")
     s.add_argument("--format", choices=["text", "json"], default="text")
     s.set_defaults(handler=cmd_report)
+
+    s = sub.add_parser(
+        "dashboard", help="write an HTML status page (default data/dashboard.html) [offline]"
+    )
+    s.add_argument("--output", type=Path, help="where to write the HTML file")
+    s.set_defaults(handler=cmd_dashboard)
 
     s = sub.add_parser("status", help="cooldown state, daily cap, next eligible time [offline]")
     s.add_argument("--format", choices=["text", "json"], default="text")

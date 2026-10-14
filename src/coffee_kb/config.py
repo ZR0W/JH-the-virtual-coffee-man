@@ -45,6 +45,7 @@ class FetchConfig:
     max_transient_retries: int = 2
     transient_retry_wait_s: float = 60
     cooldown_min_hours: float = 48
+    max_wait_for_cap_minutes: float = 180
     socket_timeout_s: float = 30
     audio: bool = False
 

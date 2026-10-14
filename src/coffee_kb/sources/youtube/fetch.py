@@ -66,6 +66,7 @@ class FetchOptions:
     audio: bool = False
     refresh: bool = False
     dry_run: bool = False
+    wait_for_cap: bool = False  # wait for rolling-cap slots instead of exiting (daily timer)
 
 
 @dataclass
@@ -602,16 +603,20 @@ def run_fetch(rt: Runtime, opts: FetchOptions) -> FetchSummary:
         log.info(summary.message)
         return summary
 
+    wait_budget_s = fc.max_wait_for_cap_minutes * 60 if opts.wait_for_cap else 0.0
     if summary.allowance <= 0:
         nxt = safety.next_eligible_time(rt.manifest, fc, now)
-        summary.message = (
-            f"daily cap reached ({fc.max_videos_per_24h} video fetch attempts per 24 h); "
-            f"next eligible at {iso(nxt)}"
-        )
-        log.info(summary.message)
-        return summary
+        if not (wait_budget_s and (nxt - now).total_seconds() <= wait_budget_s):
+            summary.message = (
+                f"daily cap reached ({fc.max_videos_per_24h} video fetch attempts per 24 h); "
+                f"next eligible at {iso(nxt)}"
+            )
+            log.info(summary.message)
+            return summary
 
-    cap = summary.allowance
+    # With --wait-for-cap the run plans a full batch and waits for each rolling-window slot to
+    # free up; the cap is still checked before every single video.
+    cap = fc.max_videos_per_24h if opts.wait_for_cap else summary.allowance
     if opts.limit is not None and opts.limit > cap:
         log.info("--limit %d clamped to the remaining daily allowance of %d", opts.limit, cap)
     n = min(cap, opts.limit) if opts.limit is not None else cap
@@ -646,13 +651,17 @@ def run_fetch(rt: Runtime, opts: FetchOptions) -> FetchSummary:
         _fmt_duration(est_per_video * total),
     )
     run_t0 = rt.clock.monotonic()
+    waited = 0.0
     try:
         for i, vid in enumerate(summary.planned):
             _pace_before_video(rt, first=(i == 0))
             if safety.remaining_allowance(rt.manifest, fc, rt.clock.now()) <= 0:
-                summary.message = "daily cap reached during the run"
-                log.info(summary.message)
-                break
+                waited_now = _wait_for_cap_slot(rt, wait_budget_s - waited)
+                waited += waited_now
+                if safety.remaining_allowance(rt.manifest, fc, rt.clock.now()) <= 0:
+                    summary.message = "daily cap reached during the run"
+                    log.info(summary.message)
+                    break
             safety.ensure_no_cooldown(rt.paths)
             outcome = fetcher.fetch(vid)
             summary.outcomes.append(outcome)
@@ -699,6 +708,24 @@ def run_fetch(rt: Runtime, opts: FetchOptions) -> FetchSummary:
     if any(o.status == "error" for o in summary.outcomes):
         summary.exit_code = 1
     return summary
+
+
+def _wait_for_cap_slot(rt: Runtime, budget_s: float) -> float:
+    """Sleep until the rolling 24 h window frees a slot, if that fits in ``budget_s``.
+    Returns the seconds slept (0 if the wait would exceed the budget)."""
+    if budget_s <= 0:
+        return 0.0
+    now = rt.clock.now()
+    nxt = safety.next_eligible_time(rt.manifest, rt.cfg.fetch, now)
+    wait = (nxt - now).total_seconds() + 1
+    if wait > budget_s:
+        log.info("next cap slot frees at %s, beyond the wait budget; stopping", iso(nxt))
+        return 0.0
+    log.info(
+        "daily cap full: waiting %s for the next slot (frees at %s)", _fmt_duration(wait), iso(nxt)
+    )
+    rt.clock.sleep(wait)
+    return wait
 
 
 def _pace_before_video(rt: Runtime, first: bool) -> None:

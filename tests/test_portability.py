@@ -32,8 +32,11 @@ def test_deploy_templates_have_placeholders_only():
     timer = (ROOT / "deploy" / "coffee-kb-fetch.timer").read_text(encoding="utf-8")
     assert "@REPO_DIR@" in service and "@UV@" in service
     assert "Type=oneshot" in service and "Restart=no" in service and "Nice=10" in service
+    assert "fetch --wait-for-cap" in service and "lock --upgrade-package yt-dlp" in service
     assert "RandomizedDelaySec=2h" in timer and "Persistent=true" in timer
-    for text in (service, timer):
+    ps1 = (ROOT / "tools" / "coffee-kb-dashboard.ps1").read_text(encoding="utf-8")
+    assert "Mandatory = $true" in ps1  # no server name baked in
+    for text in (service, timer, ps1):
         assert not re.search(r"\b\d{1,3}(\.\d{1,3}){3}\b", text)  # no IP addresses
         assert "/home/" not in text
 

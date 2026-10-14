@@ -23,6 +23,7 @@ discover_min_interval_days = 7     # floor 7
 max_transient_retries = 2          # ceiling 2 (DNS/connection/timeouts only; never on a block)
 transient_retry_wait_s = 60        # floor 60
 cooldown_min_hours = 48            # floor 48
+max_wait_for_cap_minutes = 180     # fetch --wait-for-cap (daily timer): wait for cap slots, at most 0–240
 socket_timeout_s = 30
 audio = false                      # opt-in only; see README before enabling
 
