@@ -1,0 +1,31 @@
+# coffee-kb configuration. See docs/DESIGN.md §6.5 and §6.6.
+#
+# Pacing values below have hard floors enforced in code (src/coffee_kb/safety.py).
+# Lower values make the config fail to load. There is no command-line or environment
+# override, on purpose: a YouTube block affects everyone on the home network.
+
+[paths]
+data_dir = "data"                  # relative to this file
+
+[youtube]
+channel_handle = "@jameshoffmann"
+tabs = ["videos", "shorts", "streams"]
+caption_languages = ["en", "en-GB", "en-US"]
+
+[fetch]
+sleep_between_videos_s = 60        # floor 30
+sleep_between_videos_jitter_s = 60 # random extra 0..N, so 60–120 s per video
+sleep_between_requests_s = 5       # yt-dlp sleep_interval_requests; floor 3
+sleep_between_requests_max_s = 10  # each video draws its request interval from [min, max]
+sleep_before_subtitles_s = 10      # before each caption download; floor 5
+max_videos_per_24h = 30            # ceiling 50
+discover_min_interval_days = 7     # floor 7
+max_transient_retries = 2          # ceiling 2 (DNS/connection/timeouts only; never on a block)
+transient_retry_wait_s = 60        # floor 60
+cooldown_min_hours = 48            # floor 48
+socket_timeout_s = 30
+audio = false                      # opt-in only; see README before enabling
+
+[sponsorblock]
+base_url = "https://sponsor.ajay.app"
+categories = ["sponsor", "selfpromo", "interaction", "intro", "outro", "preview", "music_offtopic", "filler"]

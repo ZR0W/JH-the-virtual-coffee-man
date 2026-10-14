@@ -1,0 +1,13 @@
+# Fetched third-party content and local state: never commit.
+/data/*
+!/data/README.md
+
+# Python / tooling
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
