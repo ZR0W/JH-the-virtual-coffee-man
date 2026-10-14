@@ -74,3 +74,34 @@ def test_iter_raw_item_ids_skips_channel_dir(data_paths):
         data_paths.snapshots_dir("youtube", item).mkdir(parents=True)
     data_paths.channel_snapshots_dir("youtube").mkdir(parents=True)
     assert list(data_paths.iter_raw_item_ids("youtube")) == ["vid1", "vid2"]
+
+
+def test_snapshot_writer_is_atomic_and_retries_rename(tmp_path, monkeypatch):
+    import os
+    from datetime import UTC, datetime
+
+    from coffee_kb import snapshots
+
+    snaps = tmp_path / "snapshots"
+    (snaps / ".tmp-19990101T000000Z").mkdir(parents=True)  # left by a crash
+    w = snapshots.SnapshotWriter(snaps, datetime(2026, 10, 14, 9, 30, tzinfo=UTC))
+    assert not (snaps / ".tmp-19990101T000000Z").exists()
+    w.write_json("info.json", {"id": "x"})
+    w.write_bytes("captions/en.manual.json3", b"{}")
+    assert list_snapshots(snaps) == []  # nothing visible until finalize
+
+    real_replace = os.replace
+    calls = {"n": 0}
+
+    def flaky_replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise PermissionError("Access is denied")  # Windows AV holding a file
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(snapshots.os, "replace", flaky_replace)
+    monkeypatch.setattr(snapshots.time, "sleep", lambda s: None)
+    final = w.finalize({"kind": "test"})
+    assert final.name == "20261014T093000Z" and calls["n"] == 2
+    assert (final / "fetch.json").exists()
+    assert sorted(p.name for p in snaps.iterdir()) == ["20261014T093000Z"]

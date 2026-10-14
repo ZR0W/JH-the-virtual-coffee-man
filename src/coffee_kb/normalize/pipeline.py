@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,6 +16,7 @@ from coffee_kb import __version__
 from coffee_kb.clock import iso, parse_stamp
 from coffee_kb.normalize.captions import Cue, parse_caption_file
 from coffee_kb.paths import DataPaths, latest_snapshot, list_snapshots
+from coffee_kb.snapshots import replace_with_retry
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def _write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
     with tmp.open("w", encoding="utf-8", newline="\n") as fh:
         for row in rows:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-    os.replace(tmp, path)
+    replace_with_retry(tmp, path)
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:

@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,23 @@ from coffee_kb.clock import stamp
 from coffee_kb.paths import TMP_PREFIX, stale_tmp_dirs, unique_snapshot_name
 
 log = logging.getLogger(__name__)
+
+
+def replace_with_retry(src: Path, dst: Path, attempts: int = 10, wait_s: float = 0.5) -> None:
+    """``os.replace``, retried briefly on PermissionError.
+
+    On Windows a just-written file can be held open for a moment by antivirus or the search
+    indexer, which makes a rename fail with "Access is denied". This is local file-system
+    waiting only; it has nothing to do with network pacing.
+    """
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(wait_s)
 
 
 def dump_json(data: Any) -> str:
@@ -56,7 +74,7 @@ class SnapshotWriter:
         record["files"] = sorted(self.files)
         path = self.tmp_dir / "fetch.json"
         path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        os.replace(self.tmp_dir, self.final_dir)
+        replace_with_retry(self.tmp_dir, self.final_dir)
         self._done = True
         return self.final_dir
 
