@@ -9,7 +9,7 @@ Status: Phase 1 (data collection) in progress. Phases 2–5 are design notes onl
 3. Repository layout
 4. Phase 1 — what gets collected
 5. Phase 1 — storage formats
-6. Phase 1 — CLI and pipeline behavior
+6. Phase 1 — CLI and pipeline behavior (incl. §6.6 YouTube request safety, §6.7 home-server deployment)
 7. Phases 2–5 — roadmap (not to be built yet)
 8. Visualization and interface catalog
 9. Legal, scope, and ethics notes
@@ -78,13 +78,17 @@ coffee-kb/
   README.md                 # human setup + usage
   pyproject.toml
   config.toml               # channel handle, sleep intervals, languages, flags
-  docs/
-    DESIGN.md               # this file
+  DESIGN.md                 # this file
+  KICKOFF_PROMPT.md         # prompt used to start the Phase 1 build session
+  deploy/
+    coffee-kb-fetch.service # systemd oneshot: discover (weekly) + fetch daily batch + normalize
+    coffee-kb-fetch.timer   # daily, randomized start time
   src/coffee_kb/
     __init__.py             # __version__ (recorded in provenance)
     cli.py                  # argparse entry: discover / fetch / normalize / report
     config.py
     manifest.py             # SQLite schema + accessors
+    safety.py               # pacing floors, daily cap, block detection, cooldown latch (§6.6)
     paths.py                # all data/ path construction lives here, nowhere else
     sources/
       __init__.py
@@ -103,9 +107,11 @@ coffee-kb/
     test_normalize.py
     test_sponsorblock.py
     test_paths.py
+    test_safety.py          # floors, cap, stop-on-block, cooldown refusal
   data/                     # git-ignored except data/README.md
     README.md
     manifest.sqlite
+    COOLDOWN                # exists only after a block; JSON {reason, detected_at, item_id}
     raw/
       youtube/
         <video_id>/
@@ -256,24 +262,34 @@ url, snapshot, normalizer_version`.
 ## 6. Phase 1 — CLI and pipeline behavior
 
 ```
-coffee-kb discover                       # refresh channel listing into manifest
+coffee-kb discover                       # refresh channel listing into manifest   [talks to YouTube]
 coffee-kb fetch [--limit N] [--video ID ...] [--since YYYY-MM-DD] [--type video|short|stream]
-                [--audio] [--refresh] [--sleep SECONDS] [--dry-run]
-coffee-kb normalize [--video ID ...]     # rebuild normalized/ from latest snapshots
-coffee-kb report [--format text|json]
+                [--audio] [--refresh] [--dry-run]                                  [talks to YouTube]
+coffee-kb normalize [--video ID ...]     # rebuild normalized/ from latest snapshots [offline]
+coffee-kb report [--format text|json]                                               [offline]
+coffee-kb status                         # cooldown state, today's count vs. cap, next eligible time [offline]
+coffee-kb clear-cooldown                 # user-only; refuses if < 48 h since the block [offline]
 ```
+
+There is deliberately **no** `--sleep` override on the command line. Pacing comes only from
+`config.toml` and is checked against the floors in §6.6. `--limit` can't exceed the remaining daily
+allowance.
 
 ### 6.1 `discover`
 Lists channel tabs, upserts `items`, updates `last_seen_at`, marks vanished items. Prints counts by
-type. Cheap; safe to run daily.
+type. Uses the same request pacing as `fetch` (it paginates, so it makes tens of requests). Run it
+**at most once a week**; the scheduled job enforces this via the `runs` table.
 
 ### 6.2 `fetch`
+- Checks the cooldown latch and daily cap **before** making any request (§6.6).
 - Default order: newest first (so `--limit 20` gives recent, well-captioned videos for inspection).
 - Skips items with a complete latest snapshot unless `--refresh`.
-- Sleeps between items (default from config, e.g. 5–10 s with jitter).
-- On bot-detection / rate-limit errors: stop the run, record status, print a clear message. No
-  automatic retries beyond a small fixed count for transient network errors.
+- Paces requests per §6.6: 60–120 s between videos, 5–10 s between requests, 10 s before subtitles.
+- On a block signal: stop immediately, write the cooldown latch, record status, exit non-zero with a
+  clear message. Transient network errors (DNS, connection reset, timeouts) get at most 2 retries with
+  a 60 s wait; block signals get none.
 - On unavailable/private/members-only: record `availability`, mark components `skipped`, continue.
+- Prints progress with an ETA, since runs are long by design.
 
 ### 6.3 `normalize`
 Pure function of `raw/` → `normalized/`. Overwrites normalized outputs. No network.
@@ -286,6 +302,8 @@ Prints:
 - Total hours of video fetched and total transcript words (manual preferred, auto fallback).
 - Errors grouped by component with item IDs.
 - Items fetched but not normalized (stale normalization).
+- Safety state: cooldown latch present? (reason + since when), videos fetched in the last 24 h vs. cap,
+  estimated days remaining to finish the channel at the current cap.
 
 ### 6.5 Config (`config.toml`)
 
@@ -296,14 +314,93 @@ tabs = ["videos", "shorts", "streams"]
 caption_languages = ["en", "en-GB", "en-US"]
 
 [fetch]
-sleep_seconds = 6
-sleep_jitter_seconds = 4
+# Pacing. Floors are enforced in code (§6.6); lower values are an error, not a warning.
+sleep_between_videos_s = 60        # floor 30
+sleep_between_videos_jitter_s = 60 # random extra 0..N, so 60–120 s per video
+sleep_between_requests_s = 5       # yt-dlp sleep_interval_requests; floor 3
+sleep_between_requests_max_s = 10  # yt-dlp max_sleep_interval_requests (randomized range)
+sleep_before_subtitles_s = 10      # yt-dlp sleep_interval_subtitles; floor 5
+max_videos_per_24h = 30            # ceiling 50
+discover_min_interval_days = 7
 max_transient_retries = 2
+cooldown_min_hours = 48
 audio = false
 
 [sponsorblock]
 categories = ["sponsor", "selfpromo", "interaction", "intro", "outro", "preview", "music_offtopic", "filler"]
 ```
+
+### 6.6 YouTube request safety
+
+**Why it matters.** YouTube's bot detection is based mostly on *what kind of client* is asking
+(non-browser clients, no sign-in, scripted timing) rather than raw volume. When it triggers, it flags
+the **public IP**, which the whole household shares. The typical progression is: yt-dlp requests fail
+("Sign in to confirm you're not a bot", HTTP 429 on caption downloads) → if ignored, CAPTCHAs/"unusual
+traffic" pages in normal browsers on YouTube and Google Search. It usually clears in hours to a few
+days, and residential IPs are rarely blocked permanently. The user's Google account is never involved,
+because no cookies are used; keeping it that way is the main reason for the no-cookies rule.
+
+**Which parts make YouTube requests:** `discover` (channel tab pages, paginated) and `fetch`
+(watch page / player API for metadata, one request per caption track, audio streams if enabled).
+Nothing else. SponsorBlock (`sponsor.ajay.app`) is a separate community service and is paced
+independently (1 request per video, no special handling beyond normal politeness).
+
+**Expected volume** without audio: a few YouTube requests per video, ≈2–3k requests for the whole
+channel. That's small; at 30 videos/day the channel takes about two weeks, with each daily run
+lasting 45–60 minutes.
+
+**Mechanisms (all in `safety.py`, all tested offline):**
+
+| Mechanism | Behavior |
+|---|---|
+| Pacing | 60–120 s randomized between videos; 5–10 s randomized between requests inside a video; 10 s before each subtitle download. Strictly sequential. |
+| Floors | Config load fails if between-video sleep < 30 s, between-request sleep < 3 s, subtitle sleep < 5 s, or daily cap > 50. No CLI or env override. |
+| Daily cap | Count successful + failed video fetch attempts in the last 24 h from the manifest; refuse to start more than `max_videos_per_24h`. `--limit` is clamped to the remaining allowance. |
+| Discover throttle | `discover` refuses to run more often than every `discover_min_interval_days` (manual `--force` allowed, but it still respects the cooldown). |
+| Block detection | Classify yt-dlp/HTTP errors. **Block signals:** "Sign in to confirm", "not a bot", HTTP 429, HTTP 403 from YouTube/googlevideo hosts, CAPTCHA or consent-wall HTML where JSON was expected. Unknown errors on 3 consecutive videos are also treated as a block signal. |
+| Stop on block | Abort the run immediately; no retry; finish writing the manifest; exit code 75 (EX_TEMPFAIL) so the timer log shows it clearly. |
+| Cooldown latch | Write `data/COOLDOWN` (`{reason, detected_at, item_id, yt_dlp_version}`). While present, `discover` and `fetch` exit immediately without network access. |
+| Clearing | Only `coffee-kb clear-cooldown`, only after `cooldown_min_hours` (48 h), and it prints a reminder to upgrade yt-dlp first. Agents never run it. |
+| No evasion | No cookies, proxies, VPNs, user-agent rotation, PO-token providers, or impersonation plugins. yt-dlp is used with default client settings. |
+| Audio off | `--audio` must be passed explicitly or set in config; it doubles as the riskiest traffic. |
+
+**Before each run** (documented in README, printed by `status`): upgrade yt-dlp
+(`uv lock --upgrade-package yt-dlp && uv sync`), since many failures are an outdated extractor rather
+than a block.
+
+**Don't run from shared networks** (work, office, university): a flag there affects other people.
+
+**Optional lower-risk variant (open decision, §10):** use the official YouTube Data API v3 (free API
+key) for `discover` and basic metadata, leaving yt-dlp only for the two caption files per video.
+This roughly halves unofficial traffic. Trade-offs: an API key to manage, and chapters aren't returned
+as structured data (parse them from description timestamps, or still fetch `info.json`).
+
+### 6.7 Deployment on the home server
+
+The real collection runs on the user's always-on home server (Ubuntu Server, Wi-Fi, on the home LAN),
+not on a dev machine and never in the cloud. It shares the household's public IP, so §6.6 applies in
+full; the benefit is that it can run a small batch every day unattended.
+
+Setup (README must document; no personal hostnames/usernames/IPs in the repo):
+
+1. Install `uv`, clone the repo, `uv sync`.
+2. Run the **20-video trial manually** in a `tmux` session first and inspect the output:
+   `uv run coffee-kb discover && uv run coffee-kb fetch --limit 20 && uv run coffee-kb normalize && uv run coffee-kb report`.
+3. Only after the trial looks good, install the timer:
+   - `deploy/coffee-kb-fetch.service`: `Type=oneshot`, runs as the regular (non-root) user,
+     `WorkingDirectory` = repo; `ExecStart` runs `discover` (it self-throttles to weekly), then
+     `fetch` (self-capped at the daily allowance), then `normalize`. Uses `Nice=10`.
+     Exit code 75 is recorded but not restarted (`Restart=no`).
+   - `deploy/coffee-kb-fetch.timer`: `OnCalendar=*-*-* 03:00`, `RandomizedDelaySec=2h`,
+     `Persistent=true`.
+   - Install as a user unit (`~/.config/systemd/user/`, plus `loginctl enable-linger <user>`) or a system
+     unit with `User=`; document both, recommend the user unit.
+4. Monitoring: `journalctl --user -u coffee-kb-fetch`, `uv run coffee-kb status`,
+   `uv run coffee-kb report`.
+5. No inbound ports are needed; the firewall stays as it is. The job only makes outbound HTTPS.
+6. Disk: captions + metadata for the whole channel are tens of MB; audio (if ever enabled) a few GB.
+7. Once the archive is complete, the timer can stay on to pick up new uploads (it'll typically fetch
+   0–2 videos per day).
 
 ---
 
@@ -464,8 +561,8 @@ Recommended combo: decision tree + FAQ retrieval.
 - Paraphrased facts + links back to videos (the graph, charts, cheat sheets) carry much less risk than
   transcripts.
 - **YouTube ToS** prohibits downloading content; captions/metadata are the lower-risk tier, audio is
-  opt-in for that reason. Collection should be slow and non-evasive (no cookies, no proxies, no
-  bot-detection workarounds).
+  opt-in for that reason. Collection is very slow, capped, and non-evasive (no cookies, no proxies, no
+  bot-detection workarounds), and stops itself at the first block signal (§6.6).
 - **Excluded**: members-only content, his books, other paid material, bulk public comments (noise +
   other people's personal data).
 - Any step toward publishing should be raised with the user first.
@@ -484,3 +581,5 @@ Record the answer here when decided.
 | Postgres+pgvector vs. LanceDB/Chroma for Phase 4 | pgvector |
 | Which interface first after Phase 2 | Obsidian vault + cause-and-effect map |
 | Project name | `coffee-kb` (working name) |
+| Use official YouTube Data API for discover/metadata (§6.6)? | No for now; revisit after the 20-video trial |
+| Daily cap / pacing | 30 videos per 24 h, 60–120 s between videos |
