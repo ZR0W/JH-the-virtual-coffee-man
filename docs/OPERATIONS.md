@@ -55,7 +55,6 @@ Everything this project put on the server. Anything not listed here was not crea
 | `~/.config/systemd/user/default.target.wants/coffee-kb-web.service` | enable symlink | `systemctl --user enable` |
 | `~/.local/share/systemd/timers/stamp-coffee-kb-collector.timer` | last-trigger stamp (`Persistent=true`) | systemd |
 | `~/.local/bin/uv`, `~/.local/bin/uvx`, `~/.local/bin/env`, `~/.local/bin/env.fish` | uv | uv installer |
-| `~/.local/bin/coffee-kb` → `~/coffee-kb/.venv/bin/coffee-kb` (symlink, optional) | run `coffee-kb …` from any directory | `ln -sf` (README step 3b) |
 | one line `. "$HOME/.local/bin/env"` in `~/.profile` and/or `~/.bashrc` | PATH for uv | uv installer |
 | `~/.cache/uv/` | uv package cache | uv |
 | `~/.cache/yt-dlp/` | yt-dlp's cache | yt-dlp |
@@ -73,11 +72,6 @@ services, no router changes. **Linger and the ufw rule may also be relied on by 
 user runs**; before removing either, check (§7).
 
 ## 3. Everyday commands (on the server, in `~/coffee-kb`)
-
-`uv run coffee-kb …` must be run inside `~/coffee-kb` (elsewhere: "Failed to spawn: coffee-kb").
-With the optional symlink (README step 3b), plain `coffee-kb …` works from any directory; the CLI
-finds its config via `--config`, `$COFFEE_KB_CONFIG`, `./config.toml`, then the checkout it runs
-from.
 
 ```bash
 uv run coffee-kb collector status        # timer, next/last run, cooldown, 24 h cap
@@ -135,8 +129,6 @@ Always: diagnose with §4 first, keep fixes minimal, never touch the safety rule
 | Captions recorded as `error` mentioning "PO token" | YouTube withholding captions from yt-dlp's default clients | Don't add PO-token providers or cookies (forbidden). Upgrade yt-dlp; if it persists across many videos, stop and discuss with the user. |
 | Many videos fail with unknown errors (3 in a row trips the latch) | outdated yt-dlp / YouTube change | Upgrade yt-dlp; see the cooldown row. |
 | yt-dlp warning "No supported JavaScript runtime" in every fetch.json | known and accepted (decision: no deno) | Nothing, unless captions start failing; then discuss installing deno with the user. |
-| `uv run coffee-kb …` → "Failed to spawn: coffee-kb" | not inside `~/coffee-kb` (uv finds the project by directory) | `cd ~/coffee-kb` first, or use the `~/.local/bin/coffee-kb` symlink (README step 3b). |
-| `uv: command not found` in a new shell | `~/.local/bin` not on PATH | Log in again (Ubuntu's `~/.profile` adds it) or `source ~/.local/bin/env`. |
 | `fetch`: "another coffee-kb run holds data/.lock" | a run is in progress, or a crash left the lock | If `systemctl --user status coffee-kb-collector` shows it running, wait. A lock older than 8 h is taken over automatically. Never delete it while a run is active. |
 | `git pull` refuses: local changes to `uv.lock` | nightly yt-dlp upgrade | `git checkout uv.lock && git pull && uv sync` (then §6 step 3). |
 | Web page unreachable from the PC | service down, port blocked, or the server's IP changed (DHCP) | `uv run coffee-kb web status`; `ss -ltnp \| grep 8787`; `sudo ufw status`; `ip -4 addr` for the current IP. Restart: `systemctl --user restart coffee-kb-web`. |
@@ -213,12 +205,10 @@ systemctl --user list-unit-files --state=enabled --no-pager   # anything besides
 
 If nothing else of the user's needs it: `sudo loginctl disable-linger "$USER"`.
 
-**Step 4: remove the checkout, caches and the optional command symlink** (this deletes the
-collected data unless backed up):
+**Step 4: remove the checkout and caches** (this deletes the collected data unless backed up):
 
 ```bash
 rm -rf ~/coffee-kb ~/.cache/yt-dlp
-rm -f ~/.local/bin/coffee-kb
 ```
 
 **Step 5 (optional): remove uv**, if nothing else uses it:
@@ -238,7 +228,7 @@ ls ~/.config/systemd/user/ 2>/dev/null | grep -i coffee             # expect not
 ss -ltnp | grep 8787                                                # expect nothing
 sudo ufw status | grep 8787                                         # expect nothing
 loginctl show-user "$USER" -p Linger                                # as decided in step 3
-ls -d ~/coffee-kb ~/.cache/yt-dlp ~/.local/bin/coffee-kb 2>/dev/null   # expect nothing
+ls -d ~/coffee-kb ~/.cache/yt-dlp 2>/dev/null                       # expect nothing
 ```
 
 **On the PC** (Windows), if the whole project is being removed: delete the checkout folder

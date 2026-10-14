@@ -264,17 +264,6 @@ rm -f data/.lock data/*.txt data/trial-fetch.pid      # PC-only leftovers
 uv run coffee-kb status                               # cooldown: none; cap counts the PC's runs
 ```
 
-**3b. Server (optional): make `coffee-kb` a plain command** usable from any directory, without
-`uv run` or `cd ~/coffee-kb` first:
-
-```bash
-ln -sf ~/coffee-kb/.venv/bin/coffee-kb ~/.local/bin/coffee-kb
-coffee-kb status                       # works from anywhere; finds ~/coffee-kb/config.toml itself
-```
-
-(`uv run coffee-kb …` only works inside `~/coffee-kb`, because `uv run` looks for the project in
-the current directory; elsewhere it fails with "Failed to spawn: coffee-kb".)
-
 **4. Server: install both components**:
 
 ```bash

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from coffee_kb import __version__, safety
 from coffee_kb.clock import Clock, iso
-from coffee_kb.config import Config, ConfigError, find_config, load_config
+from coffee_kb.config import DEFAULT_CONFIG_NAME, Config, ConfigError, load_config
 from coffee_kb.manifest import Manifest
 from coffee_kb.paths import DataPaths
 from coffee_kb.runtime import Runtime
@@ -470,9 +470,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--config",
         type=Path,
-        default=None,
-        help="path to config.toml (default: $COFFEE_KB_CONFIG, else ./config.toml, else the "
-        "checkout coffee-kb runs from)",
+        default=Path(DEFAULT_CONFIG_NAME),
+        help="path to config.toml (default: ./config.toml)",
     )
     p.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     sub = p.add_subparsers(dest="command", required=True, metavar="COMMAND")
@@ -576,7 +575,6 @@ def main(argv: Sequence[str] | None = None, clock: Clock | None = None) -> int:
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)
     try:
-        args.config = find_config(args.config).resolve()
         cfg = load_config(args.config)
     except ConfigError as exc:
         print(f"coffee-kb: config error: {exc}", file=sys.stderr)

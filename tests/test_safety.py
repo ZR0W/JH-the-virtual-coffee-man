@@ -388,20 +388,3 @@ def test_evasion_params_rejected(key):
     with pytest.raises(safety.UnsafeConfigError):
         safety.assert_no_evasion({"quiet": True, key: "x"})
     safety.assert_no_evasion({"quiet": True, key: None})
-
-
-def test_find_config_order(tmp_path, monkeypatch):
-    from coffee_kb.config import find_config
-
-    repo_cfg = Path(__file__).resolve().parents[1] / "config.toml"
-    elsewhere = tmp_path / "somewhere"
-    elsewhere.mkdir()
-    monkeypatch.chdir(elsewhere)
-    monkeypatch.delenv("COFFEE_KB_CONFIG", raising=False)
-    # Run from any directory: falls back to the checkout's config.toml.
-    assert find_config(None).resolve() == repo_cfg
-    (elsewhere / "config.toml").write_text("", encoding="utf-8")
-    assert find_config(None) == Path("config.toml")
-    monkeypatch.setenv("COFFEE_KB_CONFIG", str(tmp_path / "env.toml"))
-    assert find_config(None) == tmp_path / "env.toml"
-    assert find_config(tmp_path / "x.toml") == tmp_path / "x.toml"
