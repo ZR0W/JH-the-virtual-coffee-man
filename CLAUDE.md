@@ -1,6 +1,6 @@
 # CLAUDE.md — agent guide for coffee-kb
 
-Read this file first, then [DESIGN.md](DESIGN.md) for the full design and roadmap.
+Read this file first, then [docs/DESIGN.md](docs/DESIGN.md) for the full design and roadmap.
 
 ## What this project is
 
@@ -14,14 +14,14 @@ The project has two halves:
 1. **Data collection** (Phase 1) — fetch, store raw, normalize, and report coverage. **This is the only
    phase you are building now.**
 2. **Everything downstream** (Phases 2–5) — extraction, synthesis, retrieval, and interfaces. These are
-   documented in `DESIGN.md` so the Phase 1 design doesn't block them. **Do not build them yet.**
+   documented in `docs/DESIGN.md` so the Phase 1 design doesn't block them. **Do not build them yet.**
 
 ## ⚠️ YouTube request safety — read before writing or running any fetch code
 
 YouTube blocks clients it thinks are bots. A block applies to the **user's home IP**, which the whole
 household shares, so a careless run causes real inconvenience (failed fetches, CAPTCHAs on YouTube and
 Google Search for hours to days). There is no deadline on this project. **Slow and complete beats fast.**
-Full details in `DESIGN.md` §6.6.
+Full details in `docs/DESIGN.md` §6.6.
 
 **Only `discover` and `fetch` talk to YouTube.** `normalize` and `report` are offline. SponsorBlock is a
 separate service, not YouTube.
@@ -44,16 +44,38 @@ Rules, all enforced in code, not just documented:
    PO-token generators or other bot-detection workarounds. If blocked, the answer is to wait.
 7. **Audio stays off** unless the user explicitly turns it on. It's the heaviest and most scrutinized
    traffic.
-8. **Agents don't bulk-fetch.** In a development session (cloud or local), you may make **at most one
-   real single-video fetch** to check wiring and fixture shapes. Never run `fetch` without `--video` or
-   with `--limit` above 1. The real collection is run by the user on their home server (§ Deployment in
-   DESIGN.md). Cloud/datacenter IPs are usually blocked on sight; if that happens, say so and stop.
+8. **Agents don't run real collection.** You build in the cloud. You may make **at most one real
+   single-video fetch attempt** from the cloud to check fixture shapes; cloud IPs are usually blocked on
+   sight, which is expected. No retries, no workarounds. All real fetching is done by the user on their
+   own machines, at the checkpoints below.
+
+## How this session works: build in the cloud, user tests locally, then the server
+
+You work in a **cloud** session. The user runs every real fetch themselves. Full details in
+`docs/DESIGN.md` §6.7. Stages:
+
+- **A. Build (you, cloud).** Implement Phase 1 with offline tests passing. Commit and push as you go.
+- **Checkpoint B: local smoke test, 1 video (user's PC).** Stop and give the user exact setup + run
+  commands (`fetch --video <id>`, `normalize`, `report`, `status`) and exactly what to paste back.
+  **End your turn and wait for their results.** Fix what they show, push, repeat if needed.
+- **Checkpoint C: local 20-video trial (user's PC).** Same pattern, with a checklist of what to inspect.
+  Follow-up re-runs use `--video` on specific videos only; never ask for a second full trial on the
+  same day.
+- **Checkpoint D: move to the home server.** **Consult the user before finalizing anything
+  server-specific** (unit type, paths, run window, monitoring). Don't assume server details. The plan
+  is to copy the PC's `data/` to the server so it continues where the PC stopped.
+
+Rules for checkpoints:
+- Never move past a checkpoint without the user's results. Don't guess at what a real run would show.
+- The user's PC runs **Windows** (PowerShell); the server runs **Ubuntu**. Code and tests must work on
+  both, and every command you hand the user comes in the right shell for the machine it runs on.
+- If a cooldown latch trips at any stage, stop and discuss. Never suggest clearing it early.
 
 ## Your task in this session: Phase 1 only
 
-Build the data-collection pipeline described in `DESIGN.md` §4–§6. Concretely:
+Build the data-collection pipeline described in `docs/DESIGN.md` §4–§6. Concretely:
 
-1. Scaffold the repo as laid out in `DESIGN.md` §3 (Python package, `data/` tree, tests, config).
+1. Scaffold the repo as laid out in `docs/DESIGN.md` §3 (Python package, `data/` tree, tests, config).
 2. Implement the SQLite **manifest** (schema in §5.2).
 3. Implement the CLI commands `discover`, `fetch`, `normalize`, `report` (spec in §6).
 4. Implement fetchers: yt-dlp metadata, caption tracks (human + auto), SponsorBlock segments.
@@ -63,18 +85,21 @@ Build the data-collection pipeline described in `DESIGN.md` §4–§6. Concretel
 6. Implement the coverage report (§6.4).
 7. Implement every safety mechanism in §6.6 (pacing, floors, daily cap, stop-on-warning, cooldown
    latch, `clear-cooldown`), each with an offline test. **These are core features, not polish.**
-8. Add `deploy/` systemd service + timer files and a server setup section in the README (§6.7).
+8. Add `deploy/` systemd service + timer **templates** (placeholders, no personal details) and a
+   server setup section in the README (§6.7). Finalize them with the user at checkpoint D.
 9. Write offline tests using checked-in fixture files (no network in tests).
 10. Update `README.md` with setup and run instructions, including a prominent "before you run fetch"
     safety section.
 
-**Definition of done:** `pytest` passes offline, including tests that prove: pacing floors reject
-low values, the daily cap stops at 30, a simulated bot-detection error stops the run and writes
-`data/COOLDOWN`, and `discover`/`fetch` refuse to run while it exists. The user can then run
-`coffee-kb discover && coffee-kb fetch --limit 20 && coffee-kb normalize && coffee-kb report`
-on their home server and get the `data/` tree, populated manifest, normalized transcripts, and a
-coverage report for 20 videos (that trial takes roughly 30–45 minutes, by design). Re-running does
-no new network work for already-complete videos.
+**Definition of done (build, stage A):** `pytest` passes offline on Linux (and nothing in the code
+is POSIX-only outside `deploy/`), including tests that prove: pacing floors reject low values, the
+daily cap stops at 30, a simulated bot-detection error stops the run and writes `data/COOLDOWN`, and
+`discover`/`fetch` refuse to run while it exists.
+
+**Definition of done (Phase 1 overall):** checkpoints B and C pass on the user's PC (20 videos give the
+`data/` tree, populated manifest, normalized transcripts, and a clean coverage report; the trial takes
+roughly 30–45 minutes, by design; re-running does no new network work for complete videos), and
+checkpoint D leaves the daily timer running on the home server.
 
 ### Explicitly out of scope for now
 
@@ -82,7 +107,7 @@ no new network work for already-complete videos.
   or visualization. Leave hooks (directories, stable IDs, provenance fields) but no implementation.
 - Downloading full video files.
 - The official YouTube Data API. yt-dlp only for now; the user will decide after the 20-video trial
-  (DESIGN.md §6.6, §10).
+  (docs/DESIGN.md §6.6, §10).
 - Fetching all comments.
 
 ## Non-negotiable design rules
@@ -113,7 +138,7 @@ These come from the design discussion; don't relax them without asking the user.
 - Keep `yt-dlp` easy to upgrade (it breaks and gets fixed often); pin a minimum, not an exact version.
   Many apparent "blocks" are an outdated yt-dlp; the run docs tell the user to upgrade first.
 - Phase 1 also ships `deploy/` files (systemd service + timer) for running the daily batch on the
-  user's home server. See DESIGN.md §6.7. Don't put the user's hostname, username, or IP in the repo.
+  user's home server. See docs/DESIGN.md §6.7. Don't put the user's hostname, username, or IP in the repo.
 
 ## Data and git
 
@@ -128,7 +153,7 @@ These come from the design discussion; don't relax them without asking the user.
   interfaces should cite videos, not pretend to be him.
 - Distribution is **personal use**. Don't add publishing, hosting, or public sharing steps
   (e.g. publishing an Obsidian vault with Quartz) without flagging it to the user — publishing changes
-  the copyright/right-of-publicity picture. See `DESIGN.md` §9.
+  the copyright/right-of-publicity picture. See `docs/DESIGN.md` §9.
 - Downloading media (audio) is against YouTube's ToS even for personal use; that's why audio is
   opt-in. Captions + metadata are the lower-risk tier.
 

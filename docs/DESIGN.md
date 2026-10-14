@@ -9,7 +9,7 @@ Status: Phase 1 (data collection) in progress. Phases 2–5 are design notes onl
 3. Repository layout
 4. Phase 1 — what gets collected
 5. Phase 1 — storage formats
-6. Phase 1 — CLI and pipeline behavior (incl. §6.6 YouTube request safety, §6.7 home-server deployment)
+6. Phase 1 — CLI and pipeline behavior (incl. §6.6 YouTube request safety, §6.7 rollout: cloud → local → server)
 7. Phases 2–5 — roadmap (not to be built yet)
 8. Visualization and interface catalog
 9. Legal, scope, and ethics notes
@@ -78,8 +78,9 @@ coffee-kb/
   README.md                 # human setup + usage
   pyproject.toml
   config.toml               # channel handle, sleep intervals, languages, flags
-  DESIGN.md                 # this file
   KICKOFF_PROMPT.md         # prompt used to start the Phase 1 build session
+  docs/
+    DESIGN.md               # this file
   deploy/
     coffee-kb-fetch.service # systemd oneshot: discover (weekly) + fetch daily batch + normalize
     coffee-kb-fetch.timer   # daily, randomized start time
@@ -375,32 +376,75 @@ key) for `discover` and basic metadata, leaving yt-dlp only for the two caption 
 This roughly halves unofficial traffic. Trade-offs: an API key to manage, and chapters aren't returned
 as structured data (parse them from description timestamps, or still fetch `info.json`).
 
-### 6.7 Deployment on the home server
+### 6.7 Rollout: build in the cloud → test locally → move to the home server
 
-The real collection runs on the user's always-on home server (Ubuntu Server, Wi-Fi, on the home LAN),
-not on a dev machine and never in the cloud. It shares the household's public IP, so §6.6 applies in
-full; the benefit is that it can run a small batch every day unattended.
+Phase 1 is built by a Claude Code agent in a **cloud** session, but every real YouTube fetch that matters
+happens on the **user's own machines**. The agent drives the process and stops at each checkpoint to hand
+the user exact commands, then waits for the results before going on.
 
-Setup (README must document; no personal hostnames/usernames/IPs in the repo):
+| Stage | Where | Who runs it | Talks to YouTube? |
+|---|---|---|---|
+| A. Build + offline tests | Cloud session | Agent | No (plus at most one single-video attempt, see below) |
+| B. Local smoke test (1 video) | User's PC | User, with agent's commands | Yes, 1 video |
+| C. Local 20-video trial | User's PC | User | Yes, 20 videos (~30–45 min) |
+| D. Move to home server | Home server | User, set up together with the agent | Yes, daily batches |
+
+**Stage A — build in the cloud.**
+- Build everything in CLAUDE.md "Your task in this session" with offline tests passing.
+- The agent may make **one** real single-video fetch attempt from the cloud to check fixture shapes. Cloud
+  IPs are usually blocked; that's expected and not a bug. No retries, no workarounds. If it's blocked, build
+  fixtures from the documented formats and say so.
+- Cross-platform: the user's PC runs **Windows** and the server runs **Ubuntu**. The code and tests must work
+  on both (`pathlib` everywhere, atomic snapshot rename via `os.replace`, no POSIX-only calls outside
+  `deploy/`). README commands are given for both PowerShell and bash.
+
+**Checkpoint B — local smoke test (1 video).** The agent stops and gives the user:
+1. Setup commands (install `uv`, clone/pull, `uv sync`, upgrade yt-dlp).
+2. `uv run coffee-kb fetch --video <one chosen video ID>`, then `normalize`, `report`, `status`.
+   (Use `--video`, not `discover`, so the smoke test is a handful of requests.)
+3. Exactly what to paste back: the `report --format json` output, `status` output, the snapshot's
+   `fetch.json`, and the first ~10 lines of each normalized transcript file.
+Then the agent **waits**. It fixes whatever the results show, pushes, and repeats B if needed.
+
+**Checkpoint C — local 20-video trial.** Same pattern: the agent gives commands
+(`discover`, then `fetch --limit 20`, `normalize`, `report`) plus a checklist of what to look at
+(caption coverage, auto-caption de-dup quality on a couple of videos, chapters/sponsor joins, any errors),
+and what to paste back. It waits, then fixes and asks for re-runs of single videos only (`--video`), never
+a second full trial on the same day. If a cooldown latch trips, stop and discuss; never suggest clearing it
+early.
+
+**Checkpoint D — move to the home server (consult first).** The agent does **not** assume server details.
+Before finalizing `deploy/` files and server instructions it asks the user about anything that matters,
+for example: user unit with linger vs. system unit, where the repo should live, whether `uv`/Python are
+installed, preferred run window, how they want to monitor it. The repo ships `deploy/` files as templates
+with placeholders; the specifics are agreed with the user in chat, not written into the repo
+(no hostnames, usernames, or IPs).
+
+Server setup outline (to be confirmed with the user at checkpoint D):
 
 1. Install `uv`, clone the repo, `uv sync`.
-2. Run the **20-video trial manually** in a `tmux` session first and inspect the output:
-   `uv run coffee-kb discover && uv run coffee-kb fetch --limit 20 && uv run coffee-kb normalize && uv run coffee-kb report`.
-3. Only after the trial looks good, install the timer:
+2. **Carry over the trial data** instead of re-fetching: copy the PC's `data/` directory (manifest +
+   `raw/`) to the server (e.g. `scp -r` / `rsync`). The design is path-independent, so the server
+   continues where the PC stopped and the daily cap counts correctly. The PC then stops fetching; only one
+   machine fetches at a time.
+3. Run `status` and `report` on the server to confirm the copied state, then one manual `fetch --limit 1`.
+4. Install the timer:
    - `deploy/coffee-kb-fetch.service`: `Type=oneshot`, runs as the regular (non-root) user,
      `WorkingDirectory` = repo; `ExecStart` runs `discover` (it self-throttles to weekly), then
      `fetch` (self-capped at the daily allowance), then `normalize`. Uses `Nice=10`.
      Exit code 75 is recorded but not restarted (`Restart=no`).
    - `deploy/coffee-kb-fetch.timer`: `OnCalendar=*-*-* 03:00`, `RandomizedDelaySec=2h`,
      `Persistent=true`.
-   - Install as a user unit (`~/.config/systemd/user/`, plus `loginctl enable-linger <user>`) or a system
-     unit with `User=`; document both, recommend the user unit.
-4. Monitoring: `journalctl --user -u coffee-kb-fetch`, `uv run coffee-kb status`,
+   - User unit (`~/.config/systemd/user/`, plus `loginctl enable-linger <user>`) or system unit with
+     `User=`; document both, recommend the user unit.
+5. Monitoring: `journalctl --user -u coffee-kb-fetch`, `uv run coffee-kb status`,
    `uv run coffee-kb report`.
-5. No inbound ports are needed; the firewall stays as it is. The job only makes outbound HTTPS.
-6. Disk: captions + metadata for the whole channel are tens of MB; audio (if ever enabled) a few GB.
-7. Once the archive is complete, the timer can stay on to pick up new uploads (it'll typically fetch
-   0–2 videos per day).
+6. No inbound ports are needed; the firewall stays as it is. The job only makes outbound HTTPS.
+7. Disk: captions + metadata for the whole channel are tens of MB; audio (if ever enabled) a few GB.
+8. Once the archive is complete, the timer can stay on to pick up new uploads (typically 0–2 videos
+   per day).
+
+The PC and the server share the household's public IP, so §6.6 applies equally to both.
 
 ---
 
