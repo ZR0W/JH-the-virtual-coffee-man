@@ -440,7 +440,9 @@ Server setup outline (to be confirmed with the user at checkpoint D):
 5. Monitoring: `journalctl --user -u coffee-kb-fetch`, `uv run coffee-kb status`,
    `uv run coffee-kb report`.
 6. No inbound ports are needed; the firewall stays as it is. The job only makes outbound HTTPS.
-7. Disk: captions + metadata for the whole channel are tens of MB; audio (if ever enabled) a few GB.
+7. Disk: captions + metadata are about 1–1.5 MB per video (measured at checkpoint B: ~1.4 MB for a
+   30-minute video, mostly `info.json` with its format list and the auto-caption json3), so roughly
+   1–2 GB for the whole channel; audio (if ever enabled) several GB more.
 8. Once the archive is complete, the timer can stay on to pick up new uploads (typically 0–2 videos
    per day).
 

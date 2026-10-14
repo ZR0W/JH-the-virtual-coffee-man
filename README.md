@@ -180,8 +180,11 @@ uv run coffee-kb normalize
 uv run coffee-kb report
 ```
 
-Re-running `fetch --limit 20` afterwards should do **no** network work for videos that are
-complete. Follow-up checks use `--video` on specific videos only; never a second full trial on
+To inspect the results offline: `uv run python scripts/trial_summary.py` (caption coverage,
+auto-caption duplicate check, chapters, sponsor joins, transcript samples).
+
+Re-fetching a complete video does **no** network work: `uv run coffee-kb fetch --video ID` just
+logs that it's already complete. Follow-up checks use `--video` on specific videos only; never a second full trial on
 the same day.
 
 ---
@@ -235,8 +238,9 @@ to your regular (non-root) user, and use `sudo systemctl ...` without `--user`.
 
 The job runs once a day at a randomized time (03:00 + up to 2 h): `discover` (self-throttled to
 weekly), `fetch` (self-capped at the daily allowance), then `normalize`. No inbound ports are
-needed; it only makes outbound HTTPS requests. Captions and metadata for the whole channel are
-tens of MB.
+needed; it only makes outbound HTTPS requests. Disk: about 1–1.5 MB per video (a 30-minute
+video measured ~1.4 MB, mostly `info.json` and the auto-caption json3), so roughly 1–2 GB for
+the whole channel without audio.
 
 ### Monitoring
 

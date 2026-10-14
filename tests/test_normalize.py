@@ -281,3 +281,20 @@ def test_normalize_cli_after_fetch(env):
     assert env.run("normalize") == 0
     assert env.yt.network_calls() == calls  # offline
     assert len(read_jsonl(env.paths.transcript_path("youtube", VID, "auto"))) > 0
+
+
+def test_trial_summary_script_runs_offline(data_paths, capsys):
+    import importlib.util
+    from pathlib import Path
+
+    _make_snapshot(data_paths)
+    run_normalize(data_paths)
+    script = Path(__file__).resolve().parents[1] / "scripts" / "trial_summary.py"
+    spec = importlib.util.spec_from_file_location("trial_summary", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.main(["--data", str(data_paths.root)]) == 0
+    out = capsys.readouterr().out
+    assert VID in out and "[SPONSOR]" in out and "[Grind size]" in out
+    rows = [{"text": "a b c d"}, {"text": "b c d e f"}, {"text": "g h"}]
+    assert mod.boundary_repeats(rows) == 1
