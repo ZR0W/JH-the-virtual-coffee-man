@@ -1,6 +1,9 @@
 # CLAUDE.md — agent guide for coffee-kb
 
-Read this file first, then [docs/DESIGN.md](docs/DESIGN.md) for the full design and roadmap.
+Read this file first. Then, depending on the task:
+- operating, debugging, updating or removing the running system → [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- design, data formats, roadmap → [docs/DESIGN.md](docs/DESIGN.md) (§6.8 lists where the build refines the spec)
+- user-facing setup and commands → [README.md](README.md)
 
 ## What this project is
 
@@ -11,10 +14,27 @@ a knowledge graph, visualizations, a cited Q&A assistant, a non-LLM chatbot, fla
 
 The project has two halves:
 
-1. **Data collection** (Phase 1) — fetch, store raw, normalize, and report coverage. **This is the only
-   phase you are building now.**
+1. **Data collection** (Phase 1) — fetch, store raw, normalize, and report coverage. **Built, tested,
+   and deployed** on the user's home server (see "Current state" below).
 2. **Everything downstream** (Phases 2–5) — extraction, synthesis, retrieval, and interfaces. These are
-   documented in `docs/DESIGN.md` so the Phase 1 design doesn't block them. **Do not build them yet.**
+   documented in `docs/DESIGN.md` so the Phase 1 design doesn't block them. **Not started; don't build
+   them unless the user asks.**
+
+## Current state (2026-10-14)
+
+- Phase 1 is complete: CLI, safety mechanisms, normalizer, report, and two server components.
+  177 offline tests; `uv run ruff check . && uv run ruff format --check . && uv run pytest` is clean.
+- Checkpoints passed: B (1-video smoke test on the user's Windows PC), C (discover + 20-video trial
+  on the PC), D (moved to the home server).
+- On the home server (Ubuntu, `~/coffee-kb`, systemd **user** units with linger):
+  - **collector**: `coffee-kb-collector.timer` runs `coffee-kb collector run` daily at 03:00 + 0–2 h
+    (discover weekly → `fetch --wait-for-cap` → normalize), logging to `data/logs/coffee-kb.log`.
+  - **web**: `coffee-kb-web.service`, a read-only dashboard on port 8787 (LAN, ufw-limited).
+- The PC's copy of `data/` is latched with a `COOLDOWN` ("fetching moved to the home server"): only
+  the server fetches. 411 items listed; the backlog finishes about two weeks after deployment.
+- Work lives on branch `claude/exciting-ramanujan-wa0f9u` until the user merges it.
+- Full inventory of what is installed where, troubleshooting, updates and a clean uninstall:
+  [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## ⚠️ YouTube request safety — read before writing or running any fetch code
 
@@ -44,70 +64,50 @@ Rules, all enforced in code, not just documented:
    PO-token generators or other bot-detection workarounds. If blocked, the answer is to wait.
 7. **Audio stays off** unless the user explicitly turns it on. It's the heaviest and most scrutinized
    traffic.
-8. **Agents don't run real collection.** You build in the cloud. You may make **at most one real
-   single-video fetch attempt** from the cloud to check fixture shapes; cloud IPs are usually blocked on
-   sight, which is expected. No retries, no workarounds. All real fetching is done by the user on their
-   own machines, at the checkpoints below.
+8. **Agents don't run real collection.** Real fetching is done by the scheduled collector on the
+   home server (or by the user). From a cloud session, make **at most one real single-video fetch
+   attempt** and only to check fixture shapes (cloud IPs are usually blocked; the agent proxy refused
+   YouTube during the build). On the server, see "Working on the server" below.
 
-## How this session works: build in the cloud, user tests locally, then the server
+## Working on the server (if you've been given access)
 
-You work in a **cloud** session. The user runs every real fetch themselves. Full details in
-`docs/DESIGN.md` §6.7. Stages:
+The user may give you SSH access to the home server to diagnose, fix, update, or uninstall. Rules:
 
-- **A. Build (you, cloud).** Implement Phase 1 with offline tests passing. Commit and push as you go.
-- **Checkpoint B: local smoke test, 1 video (user's PC).** Stop and give the user exact setup + run
-  commands (`fetch --video <id>`, `normalize`, `report`, `status`) and exactly what to paste back.
-  **End your turn and wait for their results.** Fix what they show, push, repeat if needed.
-- **Checkpoint C: local 20-video trial (user's PC).** Same pattern, with a checklist of what to inspect.
-  Follow-up re-runs use `--video` on specific videos only; never ask for a second full trial on the
-  same day.
-- **Checkpoint D: move to the home server.** **Consult the user before finalizing anything
-  server-specific** (unit type, paths, run window, monitoring). Don't assume server details. The plan
-  is to copy the PC's `data/` to the server so it continues where the PC stopped.
+- **Diagnose read-only first.** Start with the diagnostic bundle in `docs/OPERATIONS.md` §4 (no
+  YouTube requests, no changes). Report what you found before changing anything.
+- **Allowed without asking:** the read-only commands in OPERATIONS §3–§4; `coffee-kb normalize`,
+  `report`, `status`, `collector status|logs`, `web status`; restarting the web app
+  (`systemctl --user restart coffee-kb-web`); re-running `collector install` / `web install`
+  (idempotent).
+- **Ask the user first:** anything with `sudo` (ufw, linger, apt); `git pull` / code updates
+  (OPERATIONS §6); editing `config.toml`; `collector run`, `collector run-now`, or any manual
+  `fetch`/`discover` (they talk to YouTube and use the daily cap); uninstalling a component;
+  deleting anything under `data/` or the checkout. Do a clean uninstall only when the user asks,
+  following OPERATIONS §7, and confirm with them whether to keep the data first.
+- **Never:** clear or delete `data/COOLDOWN` (only the user runs `clear-cooldown`, after 48 h);
+  lower pacing/cap or bypass floors; edit `data/raw/`; add cookies, proxies, user agents, PO-token
+  providers or other evasion; enable audio; run fetch/discover "to test"; fetch from a second
+  machine (the PC is retired); put hostnames, usernames or IPs into the repo.
+- If a cooldown latch has tripped, stop and discuss; never suggest clearing it early.
+- The server runs **Ubuntu** (bash); the user's PC runs **Windows** (PowerShell). Give commands in
+  the right shell for the machine they run on.
 
-Rules for checkpoints:
-- Never move past a checkpoint without the user's results. Don't guess at what a real run would show.
-- The user's PC runs **Windows** (PowerShell); the server runs **Ubuntu**. Code and tests must work on
-  both, and every command you hand the user comes in the right shell for the machine it runs on.
-- If a cooldown latch trips at any stage, stop and discuss. Never suggest clearing it early.
+## Changing the code
 
-## Your task in this session: Phase 1 only
+- Code and tests must work on Windows and Linux (`pathlib`, `os.replace`; systemd management in
+  `service.py` is Linux-only and guarded). Tests are offline: fake YouTube/SponsorBlock clients
+  (`tests/fakes.py`), fake clock (no real sleeps), small hand-trimmed fixtures.
+- Safety mechanisms (DESIGN §6.6) each have offline tests; keep them passing and add tests for new
+  behaviour. Don't weaken a safety test to make a change pass.
+- After changing code that ships to the server, the user updates with OPERATIONS §6.
+- The checkpoint history (how Phase 1 was built and rolled out) is in DESIGN §6.7–§6.8 and §10.
 
-Build the data-collection pipeline described in `docs/DESIGN.md` §4–§6. Concretely:
+### Out of scope unless the user asks
 
-1. Scaffold the repo as laid out in `docs/DESIGN.md` §3 (Python package, `data/` tree, tests, config).
-2. Implement the SQLite **manifest** (schema in §5.2).
-3. Implement the CLI commands `discover`, `fetch`, `normalize`, `report` (spec in §6).
-4. Implement fetchers: yt-dlp metadata, caption tracks (human + auto), SponsorBlock segments.
-   Audio download is implemented behind a flag that is **off by default**.
-5. Implement caption normalization to the transcript JSONL format (§5.4), including the
-   auto-caption rolling-duplicate cleanup.
-6. Implement the coverage report (§6.4).
-7. Implement every safety mechanism in §6.6 (pacing, floors, daily cap, stop-on-warning, cooldown
-   latch, `clear-cooldown`), each with an offline test. **These are core features, not polish.**
-8. Add `deploy/` systemd service + timer **templates** (placeholders, no personal details) and a
-   server setup section in the README (§6.7). Finalize them with the user at checkpoint D.
-9. Write offline tests using checked-in fixture files (no network in tests).
-10. Update `README.md` with setup and run instructions, including a prominent "before you run fetch"
-    safety section.
-
-**Definition of done (build, stage A):** `pytest` passes offline on Linux (and nothing in the code
-is POSIX-only outside `deploy/`), including tests that prove: pacing floors reject low values, the
-daily cap stops at 30, a simulated bot-detection error stops the run and writes `data/COOLDOWN`, and
-`discover`/`fetch` refuse to run while it exists.
-
-**Definition of done (Phase 1 overall):** checkpoints B and C pass on the user's PC (20 videos give the
-`data/` tree, populated manifest, normalized transcripts, and a clean coverage report; the trial takes
-roughly 30–45 minutes, by design; re-running does no new network work for complete videos), and
-checkpoint D leaves the daily timer running on the home server.
-
-### Explicitly out of scope for now
-
-- Any LLM call, extraction, chunking, embeddings, vector DB, knowledge graph, Obsidian export, UI,
-  or visualization. Leave hooks (directories, stable IDs, provenance fields) but no implementation.
+- Any LLM call, extraction, chunking, embeddings, vector DB, knowledge graph, Obsidian export, or
+  visualization beyond the status dashboard. Hooks (directories, stable IDs, provenance) exist.
 - Downloading full video files.
-- The official YouTube Data API. yt-dlp only for now; the user will decide after the 20-video trial
-  (docs/DESIGN.md §6.6, §10).
+- The official YouTube Data API (yt-dlp only; DESIGN §6.6, §10).
 - Fetching all comments.
 
 ## Non-negotiable design rules
@@ -137,8 +137,9 @@ These come from the design discussion; don't relax them without asking the user.
   requires authentication and record it as `skipped_restricted`.
 - Keep `yt-dlp` easy to upgrade (it breaks and gets fixed often); pin a minimum, not an exact version.
   Many apparent "blocks" are an outdated yt-dlp; the run docs tell the user to upgrade first.
-- Phase 1 also ships `deploy/` files (systemd service + timer) for running the daily batch on the
-  user's home server. See docs/DESIGN.md §6.7. Don't put the user's hostname, username, or IP in the repo.
+- The systemd units are generated by `coffee-kb collector install` / `coffee-kb web install`
+  (`src/coffee_kb/service.py`; `deploy/README.md` points there). Don't put the user's hostname,
+  username, or IP in the repo.
 
 ## Data and git
 
@@ -159,8 +160,10 @@ These come from the design discussion; don't relax them without asking the user.
 
 ## Tech stack (Phase 1)
 
-- Python ≥ 3.11, managed with `uv` (`pyproject.toml`, `uv.lock`).
-- `yt-dlp` (as a Python library), `httpx` for SponsorBlock, stdlib `sqlite3`, `argparse` for the CLI.
+- Python ≥ 3.11, managed with `uv` (`pyproject.toml`, `uv.lock`). Tested on 3.11, 3.13; the server
+  uses Ubuntu's 3.14.
+- `yt-dlp` (as a Python library), `httpx` for SponsorBlock, stdlib `sqlite3`, `argparse` for the CLI,
+  stdlib `http.server` for the web app.
 - `pytest` for tests; `ruff` for lint/format.
 - No other dependencies without a reason.
 
@@ -169,5 +172,27 @@ These come from the design discussion; don't relax them without asking the user.
 - Package lives in `src/coffee_kb/`; CLI entry point `coffee-kb` → `coffee_kb.cli:main`.
 - All times stored as integer milliseconds; all timestamps as UTC ISO-8601 (`2026-10-14T09:30:00Z`).
 - JSON outputs are UTF-8, one record per line for JSONL.
-- Log to stderr; `--verbose` for debug.
+- Log to stderr; `--verbose` for debug. Collection commands and the web app also log to
+  `data/logs/coffee-kb.log` (rotating).
+
+## Repository map
+
+```
+src/coffee_kb/
+  cli.py          argparse entry point: discover, fetch, normalize, report, status, clear-cooldown,
+                  collector {install,uninstall,status,logs,run,run-now}, web {install,uninstall,status,serve}
+  config.py       config.toml loading + validation (unknown keys and below-floor values are errors)
+  safety.py       floors, pacer, daily cap, block classifier, cooldown latch, run lock, no-evasion guard
+  manifest.py     SQLite manifest (items, components, runs, fetch_attempts); read-only mode for web
+  paths.py        all data/ paths;  snapshots.py  write-once atomic snapshot dirs
+  sources/youtube/{client,discover,fetch,sponsorblock}.py   the only YouTube/SponsorBlock traffic
+  normalize/{captions,pipeline}.py   raw/ -> normalized/ (pure, offline)
+  report.py       coverage/errors/safety report;  dashboard.py  dashboard page;  web.py  web app
+  service.py      systemd user units for the collector and web components
+  logs.py         data/logs/coffee-kb.log
+tests/            offline tests (fakes.py, fixtures/youtube/)
+scripts/trial_summary.py   offline transcript quality summary (checkpoint C)
+docs/DESIGN.md  docs/OPERATIONS.md  README.md  data/README.md  deploy/README.md
+config.toml       the only configuration (pacing floors enforced in code)
+```
 - Run before every commit: `uv run ruff check . && uv run ruff format --check . && uv run pytest`.

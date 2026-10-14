@@ -1,6 +1,8 @@
 # coffee-kb — Design
 
-Status: Phase 1 (data collection) in progress. Phases 2–5 are design notes only.
+Status: Phase 1 (data collection) complete and deployed on the home server (2026-10-14); see
+§6.8 for how the build refines this design and [OPERATIONS.md](OPERATIONS.md) for running it.
+Phases 2–5 are design notes only.
 
 ## Contents
 

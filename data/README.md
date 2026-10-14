@@ -7,7 +7,10 @@ Everything in this directory except this README is git-ignored. It holds third-p
 data/
   manifest.sqlite      # index: items, per-component status, runs, fetch attempts (daily cap)
   COOLDOWN             # exists only after a YouTube block signal; fetch/discover refuse to run
+                       # (on the retired PC it says "fetching moved to the home server")
   cooldown_history/    # cleared latches, kept for the record
+  .lock                # held while discover/fetch run (one run at a time; stale after 8 h)
+  logs/coffee-kb.log   # application log (+ .1-.5 rotated copies, 5 MB each)
   raw/                 # IMMUTABLE. Write-once snapshots of exactly what the sources returned.
     youtube/
       _channel/snapshots/<YYYYMMDDTHHMMSSZ>/   # discover: one <tab>.json per channel tab

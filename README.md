@@ -8,7 +8,9 @@ SponsorBlock segments once, with full provenance (video + timestamp), so later p
 This is a knowledge base *of his videos*. It cites them; it does not impersonate him.
 Personal use only. See [docs/DESIGN.md](docs/DESIGN.md) for the full design.
 
-**Status:** Phase 1 (data collection). Nothing from later phases is built yet.
+**Status:** Phase 1 (data collection) is built and running daily on the home server. Nothing
+from later phases is built yet. Running it, troubleshooting, updating and a clean uninstall:
+[docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ---
 
@@ -324,6 +326,9 @@ uv run coffee-kb web status              # is the dashboard up, and where
 **Updating the code:** the collector upgrades yt-dlp, which changes `uv.lock` in the checkout,
 so discard that before pulling, then re-install so the units and the web app pick up changes:
 `git checkout uv.lock && git pull && uv sync && uv run coffee-kb collector install && uv run coffee-kb web install`.
+
+**Troubleshooting and a complete inventory / clean uninstall** of everything installed:
+[docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 **Pausing / removing:** `uv run coffee-kb collector uninstall` stops collection;
 `uv run coffee-kb web uninstall` stops the dashboard. Each is independent. To remove everything,
