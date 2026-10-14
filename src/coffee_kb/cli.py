@@ -171,6 +171,22 @@ def cmd_fetch(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Namesp
     return _run_networked(cfg, paths, clock, args, body)
 
 
+# --- offline commands ------------------------------------------------------------------------
+
+
+def cmd_normalize(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Namespace) -> int:
+    from coffee_kb.normalize.pipeline import run_normalize
+
+    with Manifest(paths.manifest) as manifest:
+        run_id = manifest.start_run("normalize", _args_dict(args), iso(clock.now()))
+        summary = run_normalize(paths, list(args.video or []) or None)
+        code = EXIT_ERROR if summary.errors else EXIT_OK
+        manifest.finish_run(run_id, iso(clock.now()), code, summary.as_dict())
+    for key, err in sorted(summary.errors.items()):
+        print(f"normalize error: {key}: {err}", file=sys.stderr)
+    return code
+
+
 # --- status / clear-cooldown ----------------------------------------------------------------
 
 
@@ -322,6 +338,18 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--refresh", action="store_true", help="new snapshot even if one is complete")
     s.add_argument("--dry-run", action="store_true", help="show what would be fetched; no network")
     s.set_defaults(handler=cmd_fetch)
+
+    s = sub.add_parser(
+        "normalize", help="rebuild normalized/ from the latest raw snapshots [offline]"
+    )
+    s.add_argument(
+        "--video",
+        action="append",
+        type=_video_arg,
+        metavar="ID",
+        help="only this video (repeatable)",
+    )
+    s.set_defaults(handler=cmd_normalize)
 
     s = sub.add_parser("status", help="cooldown state, daily cap, next eligible time [offline]")
     s.add_argument("--format", choices=["text", "json"], default="text")
