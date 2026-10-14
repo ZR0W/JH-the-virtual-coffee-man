@@ -272,10 +272,13 @@ def cmd_collector(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Na
     st = service.collector_unit_state()
     if st.get("timer"):
         print(f"Collector timer: {st['timer']}; next run {st['next_run'] or '-'}")
-        print(
-            f"Last run: {st['last_trigger'] or 'never'} -> {st['last_result'] or '-'} "
-            f"(exit {st['last_exit_status'] or '-'}); service now {st['service']}"
-        )
+        if st["last_trigger"]:
+            print(
+                f"Last run: {st['last_trigger']} -> {st['last_result'] or '-'} "
+                f"(exit {st['last_exit_status'] or '-'}); service now {st['service']}"
+            )
+        else:
+            print(f"Last run: never; service now {st['service']}")
     else:
         print("Collector timer: not installed (or systemd not available here)")
     print()

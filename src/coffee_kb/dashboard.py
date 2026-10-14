@@ -290,7 +290,7 @@ def render_html(data: dict[str, Any]) -> str:
         f"{'now' if st['remaining_allowance'] > 0 else _e(st['next_eligible_fetch'])}</div></div>"
     )
     nxt = col.get("next_run") or "— (collector timer not installed)"
-    last = col.get("last_result") or "—"
+    last = (col.get("last_result") or "—") if col.get("last_trigger") else "never ran yet"
     if col.get("last_exit_status") not in (None, "", "0"):
         last += f" (exit {col['last_exit_status']})"
     a(
