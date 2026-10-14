@@ -15,6 +15,27 @@ from typing import Any
 from coffee_kb import safety
 
 DEFAULT_CONFIG_NAME = "config.toml"
+CONFIG_ENV = "COFFEE_KB_CONFIG"
+
+
+def find_config(explicit: Path | None) -> Path:
+    """Which config.toml to use, so `coffee-kb` works from any directory.
+
+    Order: ``--config``; ``$COFFEE_KB_CONFIG``; ``./config.toml``; the checkout this code runs
+    from (``uv sync`` installs the project in editable mode, so that's the repo root).
+    """
+    import os
+
+    if explicit is not None:
+        return Path(explicit)
+    env = os.environ.get(CONFIG_ENV)
+    if env:
+        return Path(env)
+    local = Path(DEFAULT_CONFIG_NAME)
+    if local.is_file():
+        return local
+    repo = Path(__file__).resolve().parents[2] / DEFAULT_CONFIG_NAME
+    return repo if repo.is_file() else local
 
 
 class ConfigError(ValueError):
