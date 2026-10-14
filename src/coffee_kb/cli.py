@@ -187,6 +187,18 @@ def cmd_normalize(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Na
     return code
 
 
+def cmd_report(cfg: Config, paths: DataPaths, clock: Clock, args: argparse.Namespace) -> int:
+    from coffee_kb.report import build_report, render_text
+
+    with Manifest(paths.manifest) as manifest:
+        rep = build_report(cfg, paths, manifest, clock.now())
+    if args.format == "json":
+        print(json.dumps(rep, indent=2, ensure_ascii=False))
+    else:
+        print(render_text(rep))
+    return EXIT_OK
+
+
 # --- status / clear-cooldown ----------------------------------------------------------------
 
 
@@ -350,6 +362,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="only this video (repeatable)",
     )
     s.set_defaults(handler=cmd_normalize)
+
+    s = sub.add_parser("report", help="coverage, errors and safety state [offline]")
+    s.add_argument("--format", choices=["text", "json"], default="text")
+    s.set_defaults(handler=cmd_report)
 
     s = sub.add_parser("status", help="cooldown state, daily cap, next eligible time [offline]")
     s.add_argument("--format", choices=["text", "json"], default="text")
