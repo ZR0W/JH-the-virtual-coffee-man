@@ -483,6 +483,11 @@ Where the code refines or departs from the text above:
   lists it. A 200 response with unusable caption content (e.g. captions not generated yet for a
   brand-new upload) is recorded with its first bytes and does not count toward the
   unknown-error streak.
+- **Streaming-only caption tracks are "absent".** Some videos have no real auto-caption (ASR)
+  track; yt-dlp then lists an `en` "auto" track found inside the HLS manifest
+  (`protocol: m3u8_native`), which is a playlist, not a caption file. Such tracks are recorded as
+  `absent` with a detail and never requested, so the video counts as complete with its manual
+  captions instead of being retried (seen on the server, 2026-10-15).
 - **Captions withheld for a PO token** are recorded as `error` (not `absent`), with the yt-dlp
   warning as detail. No PO-token provider is used (§6.6).
 - **Channel listings** from `discover` are stored as raw snapshots under

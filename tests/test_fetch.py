@@ -655,3 +655,34 @@ def test_wait_for_cap_budget_validated(tmp_path):
 
     with pytest.raises(ConfigError):
         config_from_dict({"fetch": {"max_wait_for_cap_minutes": 600}}, base_dir=tmp_path)
+
+
+def test_auto_track_only_offered_as_hls_is_absent_and_not_requested(env):
+    """Seen on the server: no real ASR track; yt-dlp lists auto 'en' only as an HLS stream."""
+    hls_url = "https://manifest.googlevideo.com/api/manifest/hls_playlist/subs/en.m3u8"
+    info = fixture_info(
+        VID,
+        automatic_captions={"en": [{"ext": "vtt", "url": hls_url, "protocol": "m3u8_native"}]},
+    )
+    env.yt.add_video(VID, info)
+    assert env.run("fetch", "--video", VID) == 0
+    assert ("fetch_bytes", hls_url) not in env.yt.calls
+    with env.manifest() as m:
+        auto = m.components("youtube", VID)["captions_auto"]
+        assert auto["status"] == "absent" and "streaming playlist" in auto["detail"]
+        assert m.components("youtube", VID)["captions_manual"]["status"] == "ok"
+        assert m.is_complete("youtube", VID, ["metadata", "captions_manual", "captions_auto"])
+    calls = env.yt.network_calls()
+    env.run("fetch", "--video", VID)
+    assert env.yt.network_calls() == calls  # complete: never retried
+
+
+def test_direct_track_preferred_over_hls_variant(env):
+    info = fixture_info(VID)
+    info["automatic_captions"]["en"] = [
+        {"ext": "vtt", "url": "https://example.invalid/x.m3u8", "protocol": "m3u8_native"}
+    ]
+    env.yt.add_video(VID, info)
+    assert env.run("fetch", "--video", VID) == 0
+    snap = latest_snapshot(env.paths.snapshots_dir("youtube", VID))
+    assert (snap / "captions" / "en-orig.auto.json3").exists()

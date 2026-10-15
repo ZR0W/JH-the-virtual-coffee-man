@@ -203,6 +203,25 @@ def choose_track(
     return None
 
 
+STREAMING_PROTOCOLS = ("m3u8", "m3u8_native", "http_dash_segments", "f4m", "ism")
+
+
+def _direct_formats_only(tracks: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Drop caption formats that are streaming playlists (HLS/DASH) rather than single files."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    for lang, formats in tracks.items():
+        if not isinstance(formats, list):
+            continue
+        direct = [
+            f
+            for f in formats
+            if isinstance(f, dict) and str(f.get("protocol") or "") not in STREAMING_PROTOCOLS
+        ]
+        if direct:
+            out[lang] = direct
+    return out
+
+
 def _valid_caption(fmt: str, body: bytes) -> str | None:
     """Return None if the body is a usable caption file, else a reason."""
     if not body.strip():
@@ -444,12 +463,27 @@ class VideoFetcher:
         key: str,
     ) -> dict[str, Any]:
         langs = self.rt.cfg.youtube.caption_languages
-        chosen = choose_track(info.get(key), langs, auto=(kind == "auto"))
+        auto = kind == "auto"
+        tracks = info.get(key) or {}
+        chosen = choose_track(_direct_formats_only(tracks), langs, auto=auto)
         if chosen is None:
             pot = [w for w in session.warnings if "po token" in w.lower()]
             if pot:
                 # Not "absent": YouTube withheld it. Never fail silently.
                 return {"status": mf.STATUS_ERROR, "detail": _short(pot[0])}
+            streamed = choose_track(tracks, langs, auto=auto)
+            if streamed is not None:
+                # e.g. no real ASR track (seen when human captions exist); yt-dlp only found a
+                # subtitle stream inside the HLS manifest. Not a caption file: not requested.
+                protos = sorted(
+                    {str(f.get("protocol")) for f in streamed[1] if isinstance(f, dict)}
+                )
+                return {
+                    "status": mf.STATUS_ABSENT,
+                    "detail": f"track {streamed[0]} only offered as a streaming playlist "
+                    f"({', '.join(protos)}); not fetched",
+                    "lang": streamed[0],
+                }
             return {"status": mf.STATUS_ABSENT}
         lang, formats = chosen
         by_ext = {f.get("ext"): f for f in formats if isinstance(f, dict) and f.get("url")}
