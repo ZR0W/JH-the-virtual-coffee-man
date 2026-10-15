@@ -137,3 +137,18 @@ def test_transient_tab_error_is_retried_after_60s(env):
     assert env.run("discover") == 0
     assert 60 in env.clock.sleeps
     assert state["n"] == 2
+
+
+def test_daily_throttled_discover_does_not_push_the_weekly_window(env):
+    """Regression: the timer runs discover daily; a throttled no-op run must not count as the
+    'last discover', or the 7-day window slides forward forever and discover never runs."""
+    _setup_tabs(env)
+    assert env.run("discover") == 0
+    calls = env.yt.network_calls()
+    for _ in range(6):
+        env.clock.advance(days=1)
+        assert env.run("discover") == 0  # throttled
+    assert env.yt.network_calls() == calls
+    env.clock.advance(days=1, seconds=1)  # 7 days + 1 s after the real discover
+    assert env.run("discover") == 0
+    assert env.yt.network_calls() == calls + 3

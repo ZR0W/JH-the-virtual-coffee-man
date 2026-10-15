@@ -319,11 +319,22 @@ class Manifest:
         )
 
     def last_successful_run(self, command: str) -> sqlite3.Row | None:
-        return self.conn.execute(
+        """Latest run that finished with exit 0 and actually did its work. Runs that only
+        decided not to run (summary ``"throttled": true``, e.g. a daily discover inside its
+        weekly window) don't count, or the throttle window would slide forward every day."""
+        rows = self.conn.execute(
             """SELECT * FROM runs WHERE command = ? AND exit_code = 0 AND finished_at IS NOT NULL
-               ORDER BY started_at DESC, run_id DESC LIMIT 1""",
+               ORDER BY started_at DESC, run_id DESC""",
             (command,),
-        ).fetchone()
+        )
+        for row in rows:
+            try:
+                summary = json.loads(row["summary_json"] or "{}")
+            except ValueError:
+                summary = {}
+            if not (isinstance(summary, dict) and summary.get("throttled")):
+                return row
+        return None
 
     def recent_runs(self, limit: int = 10) -> list[sqlite3.Row]:
         return self.conn.execute(
