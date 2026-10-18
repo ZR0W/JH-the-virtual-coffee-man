@@ -85,6 +85,7 @@ def build_dashboard(
 
     items = rep["items"]
     listed_total = items["total"] - items["by_listing_status"].get("missing_from_listing", 0)
+    videos = collected_videos(cfg, paths, manifest)
     health = _health(rep, runs, running, now)
     return {
         "generated_at": iso(now),
@@ -94,8 +95,47 @@ def build_dashboard(
         "running": running,
         "runs": runs,
         "progress": {"complete": items["complete"], "total": listed_total},
+        "videos": videos,
         "system": system or {},
     }
+
+
+def collected_videos(cfg: Config, paths: DataPaths, manifest: Manifest) -> list[dict[str, Any]]:
+    """Every fetched video (has a snapshot), most recently fetched first."""
+    from coffee_kb.report import _sponsor_count
+    from coffee_kb.sources.youtube.fetch import required_components
+
+    required = required_components(cfg.fetch.audio)
+    comps_by_item: dict[str, dict[str, Any]] = defaultdict(dict)
+    for row in manifest.all_components(SOURCE_TYPE):
+        comps_by_item[row["item_id"]][row["component"]] = row
+    out = []
+    for r in manifest.items(SOURCE_TYPE):
+        if not r["latest_snapshot"]:
+            continue
+        c = comps_by_item[r["item_id"]]
+
+        def st(name: str, c: dict[str, Any] = c) -> str | None:
+            return c[name]["status"] if name in c else None
+
+        problems = sorted(n for n in required if st(n) not in ("ok", "absent"))
+        out.append(
+            {
+                "item_id": r["item_id"],
+                "title": r["title"],
+                "item_type": r["item_type"],
+                "upload_date": r["upload_date"],
+                "duration_s": r["duration_s"],
+                "fetched": r["latest_snapshot"].rsplit("/", 1)[-1][:15],
+                "manual": st("captions_manual") == "ok",
+                "auto": st("captions_auto") == "ok",
+                "sponsor_segments": _sponsor_count(paths, r["latest_snapshot"]),
+                "complete": not problems,
+                "problems": problems,
+            }
+        )
+    out.sort(key=lambda v: (v["fetched"], v["upload_date"] or ""), reverse=True)
+    return out
 
 
 def _health(
@@ -177,6 +217,10 @@ svg text{fill:var(--muted);font-size:11px}.gridline{stroke:var(--grid)}.axis{str
 .capline{stroke:var(--ink2);stroke-dasharray:4 4}.b{fill:var(--series-1)}
 .b:hover{opacity:.8}details{margin-top:8px}summary{cursor:pointer;color:var(--ink2)}
 .scroll{overflow-x:auto}a{color:var(--series-1)}
+.vids{max-height:520px;overflow-y:auto;padding-top:0}.vids thead th{position:sticky;top:0;
+background:var(--surface);padding-top:12px}.vids th,.vids td{white-space:nowrap}
+.vids td:nth-child(2){white-space:normal;min-width:240px}
+.ico.good{color:var(--good)}.ico.warn{color:var(--warning)}
 """
 
 
@@ -236,6 +280,57 @@ def _chart(days: list[dict], cap: int) -> str:
             )
     parts.append(f'<line class="axis" x1="{left}" x2="{w - 8}" y1="{base}" y2="{base}"/></svg>')
     return "".join(parts)
+
+
+def _length(seconds: int | None) -> str:
+    if seconds is None:
+        return "—"
+    h, rem = divmod(int(seconds), 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
+def _videos_section(a: Any, videos: list[dict[str, Any]]) -> None:
+    complete = sum(1 for v in videos if v["complete"])
+    a(
+        f'<h2>Videos collected <span class="sub">({len(videos)} fetched: {complete} complete, '
+        f"{len(videos) - complete} partial; most recently fetched first)</span></h2>"
+    )
+    if not videos:
+        a('<div class="card sub">Nothing fetched yet.</div>')
+        return
+    a(
+        '<div class="card scroll vids"><table><thead><tr><th>Fetched</th><th>Video</th>'
+        "<th>Type</th><th>Uploaded</th><th>Length</th><th>Captions</th><th>Sponsor</th>"
+        "<th>Status</th></tr></thead><tbody>"
+    )
+    for v in videos:
+        f = v["fetched"]
+        fetched = f"{f[0:4]}-{f[4:6]}-{f[6:8]}" if len(f) >= 8 else f
+        caps = (
+            "manual + auto"
+            if v["manual"] and v["auto"]
+            else "manual"
+            if v["manual"]
+            else "auto"
+            if v["auto"]
+            else "none"
+        )
+        sb = v["sponsor_segments"]
+        sb_txt = "—" if sb is None else str(sb)
+        if v["complete"]:
+            status = '<span class="ico good">✔</span> complete'
+        else:
+            status = f'<span class="ico warn">⚠</span> partial: {_e(", ".join(v["problems"]))}'
+        url = f"https://www.youtube.com/watch?v={v['item_id']}"
+        a(
+            f'<tr><td>{_e(fetched)}</td><td><a href="{_e(url)}" rel="noreferrer" '
+            f'target="_blank">{_e(v["title"] or v["item_id"])}</a></td>'
+            f"<td>{_e(v['item_type'] or '—')}</td><td>{_e(v['upload_date'] or '—')}</td>"
+            f"<td>{_length(v['duration_s'])}</td><td>{caps}</td><td>{sb_txt}</td>"
+            f"<td>{status}</td></tr>"
+        )
+    a("</tbody></table></div>")
 
 
 def render_html(data: dict[str, Any]) -> str:
@@ -311,6 +406,8 @@ def render_html(data: dict[str, Any]) -> str:
             oc = ", ".join(f"{k} {v}" for k, v in sorted(d["outcomes"].items()))
             a(f"<tr><td>{d['date']}</td><td>{d['total']}</td><td>{_e(oc)}</td></tr>")
     a("</table></details></div>")
+
+    _videos_section(a, data.get("videos") or [])
 
     c = rep["captions"]
     a('<h2>Coverage</h2><div class="card"><table>')
