@@ -22,9 +22,9 @@ are deliberately **not** in this repo; ask the user if you need them.
 
 | | collector | web |
 |---|---|---|
-| Units | `coffee-kb-collector.timer` → `coffee-kb-collector.service` (oneshot) | `coffee-kb-web.service` (simple, always on) |
+| Units | `coffee-kb-collector.timer` → `coffee-kb-collector.service` (oneshot) | `coffee-kb-web.service` (`Type=notify`, always on) |
 | Schedule | daily `03:00` + random 0–2 h, `Persistent=true` (server local time, America/New_York) | always; `Restart=on-failure` |
-| Runs | `uv lock --upgrade-package yt-dlp` and `uv sync` (failure tolerated), then `uv run coffee-kb collector run` = discover (weekly) → `fetch --wait-for-cap` → normalize | `uv run --no-sync coffee-kb web serve` |
+| Runs | `uv lock --upgrade-package yt-dlp` and `uv sync` (failure tolerated), then `uv run coffee-kb collector run` = discover (weekly) → `fetch --wait-for-cap` → normalize | `~/coffee-kb/.venv/bin/coffee-kb web serve` (reports `READY=1` to systemd once listening) |
 | Talks to YouTube | yes: paced, capped at 30 videos / rolling 24 h, stops on block signals | never; GET-only, cannot start a fetch |
 | Writes | `data/raw`, `data/normalized`, `data/manifest.sqlite`, `data/logs/coffee-kb.log`, `uv.lock` (nightly yt-dlp upgrade) | nothing (manifest opened read-only) |
 | Network | outbound HTTPS only | listens on `0.0.0.0:8787` (IPv4), firewall-limited to the home subnet |
@@ -85,6 +85,15 @@ journalctl --user -u coffee-kb-collector -n 100 --no-pager   # incl. the yt-dlp 
 journalctl --user -u coffee-kb-web -n 50 --no-pager
 ```
 
+Restarting the web app (it's a `Type=notify` service: `restart` waits until the app reports it
+is listening, and fails with a non-zero exit code if it dies or isn't ready within 30 s):
+
+```bash
+systemctl --user restart coffee-kb-web && systemctl --user status coffee-kb-web --no-pager
+```
+
+`status` shows state, main PID, the "serving on …" status line and the last log lines.
+
 Dashboard: `http://<server-LAN-IP>:8787/` (also `/api/status` JSON, `/logs?n=500`, `/healthz`).
 
 ## 4. Health check / diagnostic bundle (read-only, safe to run any time)
@@ -132,7 +141,7 @@ Always: diagnose with §4 first, keep fixes minimal, never touch the safety rule
 | yt-dlp warning "No supported JavaScript runtime" in every fetch.json | known and accepted (decision: no deno) | Nothing, unless captions start failing; then discuss installing deno with the user. |
 | `fetch`: "another coffee-kb run holds data/.lock" | a run is in progress, or a crash left the lock | If `systemctl --user status coffee-kb-collector` shows it running, wait. A lock older than 8 h is taken over automatically. Never delete it while a run is active. |
 | `git pull` refuses: local changes to `uv.lock` | nightly yt-dlp upgrade | `git checkout uv.lock && git pull && uv sync` (then §6 step 3). |
-| Web page unreachable from the PC | service down, port blocked, or the server's IP changed (DHCP) | `uv run coffee-kb web status`; `ss -ltnp \| grep 8787`; `sudo ufw status`; `ip -4 addr` for the current IP. Restart: `systemctl --user restart coffee-kb-web`. |
+| Web page unreachable from the PC | service down, port blocked, or the server's IP changed (DHCP) | `uv run coffee-kb web status`; `ss -ltnp \| grep 8787`; `sudo ufw status`; `ip -4 addr` for the current IP. Restart: `systemctl --user restart coffee-kb-web` (exit code 0 = up and listening; non-zero = it failed to start, see `systemctl --user status coffee-kb-web`). |
 | Web shows "internal error" | exception while rendering | `uv run coffee-kb collector logs -n 100` (web errors are logged there) and `journalctl --user -u coffee-kb-web`. |
 | `database is locked` | the web app reading while the collector writes, briefly | Transient (10 s busy timeout); if persistent, check for a stuck process with `ps aux \| grep coffee-kb`. |
 | Disk full | data or logs grew | `du -sh ~/coffee-kb/data/*`; expected total ≈ 0.5 GB for the whole channel (no audio). Logs are capped at ~30 MB. |
@@ -152,7 +161,7 @@ git pull
 uv sync
 uv run pytest -q                     # offline; must pass
 uv run coffee-kb collector install   # regenerates units if service.py changed (idempotent)
-uv run coffee-kb web install         # regenerates + restarts the web app
+uv run coffee-kb web install         # regenerates the unit + restarts; exits non-zero if the app fails to start
 ```
 
 Don't update while a collector run is active (`systemctl --user status coffee-kb-collector`).

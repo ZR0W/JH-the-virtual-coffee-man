@@ -321,6 +321,8 @@ uv run coffee-kb collector status        # timer, last result, cooldown, cap
 uv run coffee-kb collector logs -f       # follow the log (Ctrl-C to stop)
 uv run coffee-kb report                  # full coverage and errors
 uv run coffee-kb web status              # is the dashboard up, and where
+systemctl --user restart coffee-kb-web && systemctl --user status coffee-kb-web --no-pager
+                                         # restart; non-zero exit if it fails to come up
 ```
 
 **Updating the code:** the collector upgrades yt-dlp, which changes `uv.lock` in the checkout,

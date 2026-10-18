@@ -511,7 +511,9 @@ Where the code refines or departs from the text above:
   Collection commands log to `data/logs/coffee-kb.log` (rotating). The web app is stdlib
   `http.server`, GET-only, opens the manifest read-only, never talks to YouTube, and shows the
   dashboard (health banner, progress, cap usage, per-day chart, runs, errors, timer state, log
-  tail), `/api/status` and `/logs`. It binds to the LAN (`[web] host = "0.0.0.0"`, decided at
+  tail), `/api/status` and `/logs`. The web unit is `Type=notify`: the app sends `READY=1` (stdlib `sd_notify`,
+  `sdnotify.py`) once its socket is bound, so `systemctl start/restart` returns a real exit
+  code; it runs the venv's `coffee-kb` directly so the app is the unit's main process. It binds to the LAN (`[web] host = "0.0.0.0"`, decided at
   checkpoint D) behind a ufw rule limited to the home subnet; `127.0.0.1` + SSH tunnel is the
   alternative.
 - **Not implemented (TODO if wanted):** pinned comments, playlist membership,

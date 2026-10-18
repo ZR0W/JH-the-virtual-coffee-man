@@ -17,6 +17,9 @@ def layout(tmp_path):
     uv = tmp_path / "bin" / "uv"
     uv.parent.mkdir()
     uv.write_text("")
+    cli = tmp_path / "repo" / ".venv" / "bin" / "coffee-kb"
+    cli.parent.mkdir(parents=True)
+    cli.write_text("")
     return service.Layout(repo_dir=tmp_path / "repo", uv=uv, unit_dir=tmp_path / "units")
 
 
@@ -57,10 +60,19 @@ def test_collector_units(layout):
     assert "Persistent=true" in timer and "WantedBy=timers.target" in timer
 
 
-def test_web_unit(layout):
+def test_web_unit_is_type_notify_and_runs_the_app_directly(layout):
     svc = service.render_web_service(layout, layout.repo_dir / "config.toml")
-    assert "coffee-kb web serve" in svc and "Restart=on-failure" in svc
-    assert "WantedBy=default.target" in svc
+    assert "Type=notify" in svc and "TimeoutStartSec=30" in svc
+    # The app itself is the main process (systemd accepts READY=1 only from it by default).
+    exec_line = next(line for line in svc.splitlines() if line.startswith("ExecStart="))
+    assert exec_line == f"ExecStart={layout.venv_cli} web serve"
+    assert "Restart=on-failure" in svc and "WantedBy=default.target" in svc
+
+
+def test_web_install_needs_synced_venv(layout, fake_systemd):
+    layout.venv_cli.unlink()
+    with pytest.raises(service.ServiceError, match="uv sync"):
+        service.install_web(layout, layout.repo_dir / "config.toml")
 
 
 def test_install_and_uninstall(layout, fake_systemd):
@@ -199,3 +211,79 @@ def test_web_works_before_any_data_and_creates_nothing(env, web):
     status, _, body = _get(web + "/")
     assert status == 200 and "Videos collected" in body
     assert not env.paths.manifest.exists()  # read-only: no manifest created
+
+
+# --- sd_notify (Type=notify readiness) ------------------------------------------------------
+
+needs_unix = pytest.mark.skipif(
+    not hasattr(__import__("socket"), "AF_UNIX"), reason="unix datagram sockets only"
+)
+
+
+@pytest.fixture
+def notify_socket(tmp_path, monkeypatch):
+    import socket
+
+    path = tmp_path / "notify.sock"
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    sock.bind(str(path))
+    sock.settimeout(2)
+    monkeypatch.setenv("NOTIFY_SOCKET", str(path))
+    yield sock
+    sock.close()
+
+
+@needs_unix
+def test_notify_sends_to_systemd_socket(notify_socket):
+    from coffee_kb import sdnotify
+
+    assert sdnotify.notify("READY=1", "STATUS=hello")
+    assert notify_socket.recv(1024) == b"READY=1\nSTATUS=hello"
+
+
+def test_notify_is_noop_outside_systemd(monkeypatch):
+    from coffee_kb import sdnotify
+
+    monkeypatch.delenv("NOTIFY_SOCKET", raising=False)
+    assert sdnotify.notify("READY=1") is False
+
+
+@needs_unix
+def test_serve_reports_ready_only_after_binding(env, cfg, notify_socket, monkeypatch):
+    from http.server import ThreadingHTTPServer
+
+    from coffee_kb import web
+    from coffee_kb.config import WebConfig
+
+    cfg = cfg.__class__(data_dir=cfg.data_dir, web=WebConfig(host="127.0.0.1", port=0))
+
+    def stop_immediately(self):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(ThreadingHTTPServer, "serve_forever", stop_immediately)
+    web.serve(cfg, env.paths, env.clock)
+    ready = notify_socket.recv(1024).decode()
+    assert ready.startswith("READY=1\nSTATUS=serving on http://127.0.0.1:")
+    assert notify_socket.recv(1024) == b"STOPPING=1"
+
+
+@needs_unix
+def test_serve_never_reports_ready_if_port_is_taken(env, cfg, notify_socket):
+    import socket
+
+    from coffee_kb import web
+    from coffee_kb.config import WebConfig
+
+    blocker = socket.socket()
+    blocker.bind(("127.0.0.1", 0))
+    blocker.listen()
+    port = blocker.getsockname()[1]
+    cfg = cfg.__class__(data_dir=cfg.data_dir, web=WebConfig(host="127.0.0.1", port=port))
+    try:
+        with pytest.raises(OSError):
+            web.serve(cfg, env.paths, env.clock)
+    finally:
+        blocker.close()
+    notify_socket.settimeout(0.2)
+    with pytest.raises(TimeoutError):
+        notify_socket.recv(1024)  # no READY=1: systemd would fail the start

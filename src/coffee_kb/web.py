@@ -19,6 +19,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from coffee_kb import sdnotify
 from coffee_kb.clock import Clock
 from coffee_kb.config import Config
 from coffee_kb.dashboard import build_dashboard, render_html, system_info
@@ -111,12 +112,16 @@ def make_server(
 
 
 def serve(cfg: Config, paths: DataPaths, clock: Clock) -> None:
+    # Binding happens here; if the port is taken this raises and the process exits non-zero
+    # *before* READY=1, so `systemctl restart` reports the failure.
     server = make_server(cfg, paths, clock)
     host, port = server.server_address[:2]
     log.info("coffee-kb web: serving the status dashboard on http://%s:%s/ (read-only)", host, port)
+    sdnotify.notify("READY=1", f"STATUS=serving on http://{host}:{port}/ (read-only)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        sdnotify.notify("STOPPING=1")
         server.server_close()

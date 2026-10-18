@@ -77,7 +77,7 @@ The user may give you SSH access to the home server to diagnose, fix, update, or
   YouTube requests, no changes). Report what you found before changing anything.
 - **Allowed without asking:** the read-only commands in OPERATIONS §3–§4; `coffee-kb normalize`,
   `report`, `status`, `collector status|logs`, `web status`; restarting the web app
-  (`systemctl --user restart coffee-kb-web`); re-running `collector install` / `web install`
+  (`systemctl --user restart coffee-kb-web`, a `Type=notify` unit: non-zero exit = it failed to start); re-running `collector install` / `web install`
   (idempotent).
 - **Ask the user first:** anything with `sudo` (ufw, linger, apt); `git pull` / code updates
   (OPERATIONS §6); editing `config.toml`; `collector run`, `collector run-now`, or any manual
@@ -189,7 +189,7 @@ src/coffee_kb/
   normalize/{captions,pipeline}.py   raw/ -> normalized/ (pure, offline)
   report.py       coverage/errors/safety report;  dashboard.py  dashboard page;  web.py  web app
   service.py      systemd user units for the collector and web components
-  logs.py         data/logs/coffee-kb.log
+  logs.py         data/logs/coffee-kb.log;  sdnotify.py  systemd READY=1 for the Type=notify web unit
 tests/            offline tests (fakes.py, fixtures/youtube/)
 scripts/trial_summary.py   offline transcript quality summary (checkpoint C)
 docs/DESIGN.md  docs/OPERATIONS.md  README.md  data/README.md  deploy/README.md
