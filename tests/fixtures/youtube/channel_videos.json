@@ -1,0 +1,10 @@
+{
+  "id": "UCxxxxxxxxxxxxxxxxxxxxxx",
+  "title": "James Hoffmann - Videos",
+  "_type": "playlist",
+  "entries": [
+    {"_type": "url", "ie_key": "Youtube", "id": "abcDEF12345", "url": "https://www.youtube.com/watch?v=abcDEF12345", "title": "Grind Size Explained (fixture)", "duration": 150, "view_count": 123456},
+    {"_type": "url", "ie_key": "Youtube", "id": "ghiJKL67890", "url": "https://www.youtube.com/watch?v=ghiJKL67890", "title": "An Older Video", "duration": 900, "view_count": 999},
+    {"_type": "url", "ie_key": "Youtube", "id": "mnoPQR13579", "url": "https://www.youtube.com/watch?v=mnoPQR13579", "title": "Members Only", "duration": 600, "availability": "subscriber_only"}
+  ]
+}

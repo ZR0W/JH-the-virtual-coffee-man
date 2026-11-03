@@ -1,3 +1,6 @@
+> **Historical:** this is the prompt that started the Phase 1 build session. Phase 1 is done;
+> for the current state read [CLAUDE.md](CLAUDE.md) and [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
 # Kickoff prompt for the new Claude Code session
 
 1. `CLAUDE.md` and `docs/DESIGN.md` are already in this repo.

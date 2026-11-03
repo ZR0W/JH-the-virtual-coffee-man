@@ -1,0 +1,13 @@
+{
+  "wireMagic": "pb3",
+  "pens": [{}],
+  "wsWinStyles": [{}],
+  "wpWinPositions": [{}],
+  "events": [
+    {"tStartMs": 0, "dDurationMs": 2500, "segs": [{"utf8": "Hi, I&#39;m making <i>coffee</i>."}]},
+    {"tStartMs": 2500, "dDurationMs": 2000, "segs": [{"utf8": "[Music]"}]},
+    {"tStartMs": 12000, "dDurationMs": 3000, "segs": [{"utf8": "This video is sponsored\nby a grinder company."}]},
+    {"tStartMs": 31000, "dDurationMs": 3500, "segs": [{"utf8": "Finer grind means\nmore extraction."}]},
+    {"tStartMs": 34500, "dDurationMs": 3000, "segs": [{"utf8": "[Laughs] Mostly, anyway."}]}
+  ]
+}
